@@ -3,6 +3,9 @@ namespaced-openvpn
 
 `namespaced-openvpn` is a wrapper script for OpenVPN on Linux that solves a variety of deanonymization, information disclosure, and usability issues.
 
+    sudo /path/to/namespaced-openvpn --config ./my_openvpn_config_file
+    sudo ip netns exec protected sudo -u myusername -i
+
 ## Summary
 
 OpenVPN is widely used as a privacy technology: both for concealing the user's IP address from remote services, and for protecting otherwise unencrypted IP traffic from interception or modification by a malicious local Internet provider. However, default configurations of OpenVPN are susceptible to various "leaks" or "holes" that can violate these guarantees. Notable examples include route injection attacks and the so-called "Port Fail" vulnerability.
@@ -12,7 +15,7 @@ In my view, these issues have two root causes. One is that VPNs are not inherent
 This repository contains two approaches to these problems:
 
 * `namespaced-openvpn`, a wrapper script which systematically solves all of the enumerated security issues by moving the tunnel interface into an isolated network namespace
-* `seal-unseal-gateway`, a helper script that solves "Port Fail" only, but which otherwise preserves the default OpenVPN routing behavior
+* `seal-unseal-gateway`, a helper script which solves "Port Fail" only, but which otherwise preserves the default OpenVPN routing behavior
 
 This code is released under the MIT (Expat) license.
 
@@ -26,7 +29,7 @@ OpenVPN's [manual page](https://community.openvpn.net/openvpn/wiki/Openvpn23ManP
 
 (Under a near variant of this option, `--redirect-gateway def1`, steps 2 and 3 are combined by adding routes to `0.0.0.0/1` and `128.0.0.0/1` via `tun0`. These routes override the default route, while being in turn overridden by the static route defined in step 1, without requiring the deletion of the original default route. The distinction between these two configurations will not be important.)
 
-The result is a routing table that routes all public IPs over `tun0`, with the exception of `1.2.3.4`, which is still routed over `eth0`: without this exception, the `openvpn` process itself would be stuck in a routing loop, unable to send its encrypted output packets to the Internet. The LAN subnet `192.168.1.0/24` will still be routed over `eth0` as well: otherwise the system would lose access to LAN services, such as printers. We can now elaborate on the aforementioned problems:
+The result is a routing table that routes all public IPs over `tun0`, with the exception of `1.2.3.4`, which is still routed over `eth0`: without this exception, the `openvpn` process itself would be stuck in a routing loop, unable to send its encrypted output packets to the Internet. The LAN subnet `192.168.1.0/24` will still be routed over `eth0` as well: otherwise the system would lose access to LAN services, such as printers. We can now describe the aforementioned problems in detail:
 
 ### Route injection attacks
 
@@ -45,7 +48,7 @@ On Linux, this attack already has an effective mitigation: the sysctl options `n
 
 ### IPv6 leaks
 
-"IPv6 leaks" are the trivial problem that on a dual-stack system, changing the default route for IPv4 has no effect on the IPv6 stack --- so IPv6-aware applications will continue to route their IPv6 traffic over the physical interface. Despite the straightforward nature of this leak, its incidence in the wild is apparently high: [Perta et al., 2015](https://www.eecs.qmul.ac.uk/~hamed/papers/PETS2015VPN.pdf) discuss the scope of the problem.
+"IPv6 leaks" are a fairly trivial problem: on a dual-stack system, changing the default route for IPv4 has no effect on the IPv6 stack, so applications will continue to route their IPv6 traffic over the physical interface. Despite the straightforward nature of the issue, its incidence in the wild is apparently high: [Perta et al., 2015](https://www.eecs.qmul.ac.uk/~hamed/papers/PETS2015VPN.pdf) discuss the scope of the problem.
 
 ### DNS leaks
 
@@ -57,7 +60,7 @@ This is a usability issue, rather than a privacy issue, but it stems from the sa
 
 ## namespaced-openvpn
 
-The [network namespace](https://lwn.net/Articles/580893/) functionality of Linux provides, in effect, additional isolated copies of the entire kernel networking stack. The idea behind `namespaced-openvpn` is this: the `openvpn` process itself can run in the root namespace, but its tunnel interface `tun0` can be transferred into a new, protected network namespace. This new namespace will have the loopback adapter `lo` and `tun0` as its only interfaces, and all non-local traffic will be routed over `tun0`. The `openvpn` process is not disrupted by this because it communicates with `tun0` via the file descriptor it opened to `/dev/net/tun`, which is unaffected by the change of namespace.
+The [network namespace](https://lwn.net/Articles/580893/) functionality of Linux provides, in effect, additional isolated copies of the entire kernel networking stack. The idea behind `namespaced-openvpn` is this: the `openvpn` process itself can run in the root namespace, but its tunnel interface `tun0` can be transferred into a new, protected network namespace. This new namespace will have the loopback adapter `lo` and `tun0` as its only interfaces, and all non-localhost traffic will be routed over `tun0`. The `openvpn` process is not disrupted by this because it communicates with `tun0` via the file descriptor it opened to `/dev/net/tun`, which is unaffected by the change of namespace.
 
 As long as sensitive applications are correctly launched within the new, isolated namespace, all of the enumerated issues are systematically resolved:
 
@@ -66,7 +69,11 @@ As long as sensitive applications are correctly launched within the new, isolate
 3. Asymmetric routing attacks, IPv6 leaks, and DNS leaks are all blocked because the protected namespace has no access to any physical interface.
 4. The `openvpn` process can freely restart because it runs in the root namespace, which has unmodified routes --- so its DNS request for the remote, and then its handshake with the resulting remote IP, all use `eth0`.
 
-A further strength of this approach is that it does not require any configuration changes to the root namespace, e.g., recreating `eth0` as a virtual bridge. It also provides full privacy to sensitive applications while allowing non-sensitive applications to use the physical interfaces, which may have better bandwidth or latency characteristics. Finally, it can peacefully coexist with an ordinary OpenVPN connection in the root namespace that does not set `--redirect-gateway`, without any concerns about conflicting private IPv4 addresses and routes.
+This approach has some further strengths:
+
+1. It does not require any configuration changes to the root namespace, e.g., recreating `eth0` as a virtual bridge.
+2. Non-sensitive applications are free to use the physical interfaces, which may have better bandwidth or latency characteristics.
+3. A `namespaced-openvpn` instance can peacefully coexist with another OpenVPN connection in the root namespace, without any concerns about conflicting private IPv4 addresses and routes.
 
 Use it like this:
 
