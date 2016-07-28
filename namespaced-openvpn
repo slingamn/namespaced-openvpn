@@ -165,7 +165,13 @@ def route_up(args):
         # argument --- so the executable has to be quoted together with its
         # arguments). After this, we should have a single string that roughly
         # resembles a shell command.
-        subprocess.check_call(shlex.split(routeup_cmd), shell=True)
+        cmd = shlex.split(routeup_cmd)[0]
+        # openvpn clears $PATH before script execution
+        os.environ['PATH'] = '.'
+        try:
+            subprocess.check_call(cmd, shell=True)
+        finally:
+            os.unsetenv('PATH')
 
     return 0
 
