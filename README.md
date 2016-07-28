@@ -1,7 +1,7 @@
 namespaced-openvpn
 ==================
 
-`namespaced-openvpn` is a wrapper script for OpenVPN on Linux that solves a variety of deanonymization, information disclosure, and usability issues.
+`namespaced-openvpn` is a wrapper script for OpenVPN on Linux that uses network namespaces to solve a variety of deanonymization, information disclosure, and usability issues.
 
     sudo /path/to/namespaced-openvpn --config ./my_openvpn_config_file
     sudo ip netns exec protected sudo -u myusername -i
