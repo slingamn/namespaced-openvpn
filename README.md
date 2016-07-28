@@ -21,7 +21,7 @@ This code is released under the MIT (Expat) license.
 
 ## Security and usability problems with OpenVPN's default configuration
 
-OpenVPN's `--redirect-gateway` option (described in detail in its [manual page](https://community.openvpn.net/openvpn/wiki/Openvpn23ManPage)) is the basic mechanism by which it attempts to provide network-layer privacy. In the following examples, a physical interface `eth0` is connected to a LAN on `192.168.1.0/24`, with `192.168.1.1` as its default gateway; `1.2.3.4` is the publicly routable address of the remote VPN server, and `10.10.10.10` is the default gateway of the tunnel interface `tun0`. If the `--redirect-gateway` option is set by the client or pushed from the server side, after establishing the tunnel, the `openvpn` process performs these three steps:
+OpenVPN's `--redirect-gateway` option (described in detail in its [manual page](https://community.openvpn.net/openvpn/wiki/Openvpn23ManPage)) is the basic mechanism by which it attempts to provide network-layer privacy. In the following examples, a physical interface `eth0` is connected to a LAN on `192.168.1.0/24`, with `192.168.1.1` as its default gateway; `1.2.3.4` is the publicly routable address of the remote VPN server, and `10.10.10.10` is the default gateway of the tunnel interface `tun0`. If the `--redirect-gateway` option is set by the client or pushed from the server side, the `openvpn` process performs these three steps after establishing the tunnel:
 
 1. First, create a static route for `1.2.3.4` going over `eth0` via `192.168.1.1`
 2. Delete the default route over `eth0` via `192.168.1.1`
@@ -97,7 +97,7 @@ Use it by adding these lines to your OpenVPN config file (or adding the equivale
     up /path/to/seal_unseal_gateway
     down /path/to/seal_unseal_gateway
 
-The other privacy issues have relatively standard mitigations. To wit, route injection can be mitigated by using only trusted DHCP servers (e.g., trusted residential gateways), IPv6 leaks can be mitigated by disabling IPv6 (`sysctl -w net.ipv6.conf.all.disable_ipv6=1`), DNS leaks can be mitigated by ensuring that no LAN nameservers appear in `/etc/resolv.conf`, and asymmetric routing attacks can be mitigated by using only trusted DHCP servers.
+The other privacy issues have relatively standard mitigations. To wit, route injection can be mitigated by using only trusted DHCP servers (e.g., trusted residential gateways), IPv6 leaks can be mitigated by disabling IPv6 (`sysctl -w net.ipv6.conf.all.disable_ipv6=1`), DNS leaks can be mitigated by ensuring that no LAN nameservers appear in `/etc/resolv.conf`, and asymmetric routing attacks can be mitigated with the `rp_filter` sysctl.
 
 ## Caveats
 
