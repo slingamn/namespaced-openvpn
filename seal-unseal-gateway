@@ -1,0 +1,23 @@
+#!/bin/bash
+
+# add the rules on up or route-up, otherwise delete them
+if [[ "$script_type" == "up" ]] || [[ "$script_type" == "route-up" ]]; then
+	ACTION="-A"
+else
+	ACTION="-D"
+fi
+
+if [[ -n "$trusted_ip" ]]; then
+	# trusted_ip is the publicly routable IP of the remote
+	# let openvpn's user (typically either root or a dedicated user) talk to it:
+	/sbin/iptables $ACTION OUTPUT -d $trusted_ip -m owner --uid-owner $EUID -j ACCEPT
+	# forbid everyone else from doing so:
+	/sbin/iptables $ACTION OUTPUT -d $trusted_ip -j REJECT
+	RESULT=0
+else
+	echo "trusted_ip not set; rules may have to be cleaned up manually"
+	RESULT=1
+fi
+
+/sbin/iptables -L -n
+exit $RESULT
