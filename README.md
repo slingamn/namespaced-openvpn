@@ -21,7 +21,7 @@ This code is released under the MIT (Expat) license.
 
 ## Security and usability problems with OpenVPN's default configuration
 
-OpenVPN's [manual page](https://community.openvpn.net/openvpn/wiki/Openvpn23ManPage), in its documentation of the `--redirect-gateway` option, describes the basic mechanism by which OpenVPN attempts to provide network-layer privacy. In the following examples, a physical interface `eth0` is connected to a LAN on `192.168.1.0/24`, with `192.168.1.1` as its default gateway; `1.2.3.4` is the publicly routable address of the remote VPN server, and `10.10.10.10` is the default gateway of the tunnel interface `tun0`. After establishing the tunnel, the `openvpn` process performs these three steps:
+OpenVPN's `--redirect-gateway` option (described in detail in its [manual page](https://community.openvpn.net/openvpn/wiki/Openvpn23ManPage)) is the basic mechanism by which it attempts to provide network-layer privacy. In the following examples, a physical interface `eth0` is connected to a LAN on `192.168.1.0/24`, with `192.168.1.1` as its default gateway; `1.2.3.4` is the publicly routable address of the remote VPN server, and `10.10.10.10` is the default gateway of the tunnel interface `tun0`. If the `--redirect-gateway` option is set by the client or pushed from the server side, after establishing the tunnel, the `openvpn` process performs these three steps:
 
 1. First, create a static route for `1.2.3.4` going over `eth0` via `192.168.1.1`
 2. Delete the default route over `eth0` via `192.168.1.1`
