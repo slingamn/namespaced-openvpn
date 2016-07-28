@@ -74,6 +74,7 @@ This approach has some further strengths:
 1. It does not require any configuration changes to the root namespace, e.g., recreating `eth0` as a virtual bridge.
 2. Non-sensitive applications are free to use the physical interfaces, which may have better bandwidth or latency characteristics.
 3. A `namespaced-openvpn` instance can peacefully coexist with another OpenVPN connection in the root namespace, without any concerns about conflicting private IPv4 addresses and routes.
+4. `openvpn` can be stopped and started without exposing processes in the protected namespace. If `tun0` goes away, those processes don't revert to using a physical interface; instead, they have no connectivity at all.
 
 Use it like this:
 
@@ -100,11 +101,11 @@ The other privacy issues have relatively standard mitigations. To wit, route inj
 
 ## Caveats
 
-This is alpha software. It has only been tested with a few VPN configurations, and with very new versions of OpenVPN (2.3.11) and the Linux kernel (4.6). If privacy is critical for your use case and you're not comfortable monitoring it to ensure that it's working as expected, I can't recommend it yet.
+This is alpha software. It has only been tested with a few VPN configurations, and with very new versions of OpenVPN (2.3.11) and the Linux kernel (4.6). If privacy is critical for your use case and you're not comfortable with monitoring that `namespaced-openvpn` is working as expected, I can't recommend it yet.
 
 To borrow a phrase from Stroustrup, `namespaced-openvpn` "protects against accident, not against fraud." It should be impossible for any normal application to have its traffic escape from the protected namespace back to the physical interface. However, without additional hardening, there is no guarantee that a malicious application can't force such an escape --- therefore, `namespaced-openvpn` should not be used by itself to "jail" an untrusted application.
 
 ## Wishlist
 
 * Support for tunnelling IPv6 when the VPN provider supports it. Right now, `namespaced-openvpn` disables all IPv6 in the new namespace.
-* Ideally, there would be an option to both offer limited protection to the root namespace (e.g., without protecting against route injection) and full protection to an isolated namespace. This seems difficult to achieve in a nondisruptive way.
+* Ideally, there would be an option to offer both limited protection to the root namespace (e.g., without protecting against route injection) and full protection to an isolated namespace. This seems difficult to achieve in a nondisruptive way.
