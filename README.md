@@ -4,13 +4,15 @@ namespaced-openvpn
 `namespaced-openvpn` is a wrapper script for OpenVPN on Linux that uses network namespaces to solve a variety of deanonymization, information disclosure, and usability issues.
 
     sudo /path/to/namespaced-openvpn --config ./my_openvpn_config_file
-    sudo ip netns exec protected sudo -u myusername -i
+    sudo ip netns exec protected sudo -u $USER -i
+
+The main implementation idea of `namespaced-openvpn` is this: instead of connecting a network namespace to the physical network using virtual Ethernet adapters and bridging, it suffices to transfer a tunnel interface into the namespace, while the process managing the tunnel (in this case `openvpn`) remains in the root namespace.
 
 ## Summary
 
-OpenVPN is widely used as a privacy technology: both for concealing the user's IP address from remote services, and for protecting otherwise unencrypted IP traffic from interception or modification by a malicious local Internet provider. However, default configurations of OpenVPN are susceptible to various "leaks" or "holes" that can violate these guarantees. Notable examples include route injection attacks and the so-called "Port Fail" vulnerability.
+OpenVPN is widely used as a privacy technology: both for concealing the user's IP address from remote services, and for protecting otherwise unencrypted IP traffic from interception or modification by a malicious local Internet provider. However, default configurations of OpenVPN are susceptible to various "leaks" that can violate these guarantees. Notable examples include route injection attacks and the so-called "Port Fail" vulnerability.
 
-In my view, these issues have two root causes. One is that VPNs are not inherently a privacy technology --- their core function is to bridge two trusted networks using an untrusted network (generally the public Internet) as a link. On this reading, since the fundamental role of VPNs is to *connect* networks, rather than to *isolate* them (as required in the privacy use case), it is unsurprising that in the absence of additional precautions, they can allow information to escape. The second cause is that the `openvpn` process itself, the system-level network configuration software (e.g., `NetworkManager`), and the user's applications are all sharing a single routing table --- and when their use cases for this shared resource come into conflict, it can lead to expectations being violated.
+My view is that these issues have two root causes. One is that VPNs are not inherently a privacy technology --- their core function is to bridge two trusted networks using an untrusted network (generally the public Internet) as a link. On this reading, since the fundamental role of VPNs is to *connect* networks, rather than to *isolate* them (as required in the privacy use case), it is unsurprising that in the absence of additional precautions, they can allow information to escape. The second cause is that the `openvpn` process itself, the system-level network configuration software (e.g., `NetworkManager`), and the user's applications are all sharing a single routing table --- and when their use cases for this shared resource come into conflict, it can lead to expectations being violated.
 
 This repository contains two approaches to these problems:
 
@@ -64,7 +66,7 @@ The [network namespace](https://lwn.net/Articles/580893/) functionality of Linux
 
 As long as sensitive applications are correctly launched within the new, isolated namespace, all of the enumerated issues are systematically resolved:
 
-1. Route injection is impossible because `NetworkManager`, `dhclient`, etc. are running in the root namespace, so they're free to respond to any changes in the external network environment with no danger of affecting the default route in the protected namespace.
+1. Route injection is impossible because `NetworkManager`, `dhclient`, etc. are running in the root namespace, so they can respond to any change in the external network environment without affecting the protected namespace. In essence, this is a separation of concerns: the root namespace is tasked with maintaining *connectivity*, including interfacing with untrusted DHCP and DNS servers, while the protected namespace is tasked with maintaining privacy.
 2. "Port Fail" is blocked because the protected namespace has no routing exception for the remote gateway: every packet must go to `tun0`.
 3. Asymmetric routing attacks, IPv6 leaks, and DNS leaks are all blocked because the protected namespace has no access to any physical interface.
 4. The `openvpn` process can freely restart because it runs in the root namespace, which has unmodified routes --- so its DNS request for the remote, and then its handshake with the resulting remote IP, all use `eth0`.
@@ -73,7 +75,7 @@ This approach has some further strengths:
 
 1. It does not require any configuration changes to the root namespace, e.g., recreating `eth0` as a virtual bridge.
 2. Non-sensitive applications are free to use the physical interfaces, which may have better bandwidth or latency characteristics.
-3. A `namespaced-openvpn` instance can peacefully coexist with another OpenVPN connection in the root namespace, without any concerns about conflicting private IPv4 addresses and routes.
+3. A `namespaced-openvpn` instance can peacefully coexist with another OpenVPN connection in the root namespace, without any concerns about conflicting private IPv4 addresses and routes. (Use the `--nobind` option to prevent the second `openvpn` process from trying and failing to reuse port 1194 in the root namespace.)
 4. `openvpn` can be stopped and started without exposing processes in the protected namespace. If `tun0` goes away, those processes don't revert to using a physical interface; instead, they have no connectivity at all.
 
 Use it like this:
@@ -82,7 +84,7 @@ Use it like this:
 
 The new, isolated namespace will be named `protected` by default. Start an unprivileged shell in it like this:
 
-    sudo ip netns exec protected sudo -u myusername -i
+    sudo ip netns exec protected sudo -u $USER -i
 
 Any applications started from this shell will inherit the namespace.
 
@@ -94,8 +96,8 @@ Unfortunately, `namespaced-openvpn` sacrifices one of the traditional strengths 
 Use it by adding these lines to your OpenVPN config file (or adding the equivalent command-line options):
 
     script-security 2
-    up /path/to/seal_unseal_gateway
-    down /path/to/seal_unseal_gateway
+    up /path/to/seal-unseal-gateway
+    down /path/to/seal-unseal-gateway
 
 The other privacy issues have relatively standard mitigations. To wit, route injection can be mitigated by using only trusted DHCP servers (e.g., trusted residential gateways), IPv6 leaks can be mitigated by disabling IPv6 (`sysctl -w net.ipv6.conf.all.disable_ipv6=1`), DNS leaks can be mitigated by ensuring that no LAN nameservers appear in `/etc/resolv.conf`, and asymmetric routing attacks can be mitigated with the `rp_filter` sysctl.
 
@@ -105,7 +107,13 @@ This is alpha software. It has only been tested with a few VPN configurations, a
 
 To borrow a phrase from Stroustrup, `namespaced-openvpn` "protects against accident, not against fraud." It should be impossible for any normal application to have its traffic escape from the protected namespace back to the physical interface. However, without additional hardening, there is no guarantee that a malicious application can't force such an escape --- therefore, `namespaced-openvpn` should not be used by itself to "jail" an untrusted application.
 
-## Wishlist
+## TODO
 
-* Support for tunnelling IPv6 when the VPN provider supports it. Right now, `namespaced-openvpn` disables all IPv6 in the new namespace.
+Bugs:
+
+* `namespaced-openvpn` tries to be a drop-in replacement for `openvpn`, but due to implementation details, `route-up` directives that use multiple levels of quotes or escaping may not be handled correctly.
+
+Wishlist:
+
+* Support for tunnelling IPv6 (when the remote VPN provider offers it). Right now, `namespaced-openvpn` disables all IPv6 in the new namespace.
 * Ideally, there would be an option to offer both limited protection to the root namespace (e.g., without protecting against route injection) and full protection to an isolated namespace. This seems difficult to achieve in a nondisruptive way.
