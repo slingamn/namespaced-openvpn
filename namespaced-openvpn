@@ -56,11 +56,14 @@ def setup_namespace(namespace):
     if os.path.exists(os.path.join('/var/run/netns', namespace)):
         adapters = _adapter_names(namespace)
         if adapters != [b'lo']:
-            LOG.warning('Namespace %s already has adapters %s, exiting.' % (namespace, adapters))
+            LOG.error('Namespace %s already has adapters %s, exiting.' % (namespace, adapters))
             raise Exception
     else:
         subprocess.check_call([IP_CMD, 'netns', 'add', namespace])
-    subprocess.check_call([IP_CMD, 'netns', 'exec', namespace, IP_CMD, 'link', 'set', 'lo', 'up'])
+    subprocess.check_call([
+        IP_CMD, 'netns', 'exec', namespace,
+        IP_CMD, 'link', 'set', 'lo', 'up'
+    ])
 
 
 def parse_dhcp_opts(env):
@@ -73,47 +76,62 @@ def parse_dhcp_opts(env):
             break
         # e.g., foreign_option_1=dhcp-option DNS 8.8.8.8
         if foreign_opt.startswith('dhcp-option'):
-           opt_pieces = foreign_opt.split()
-           if len(opt_pieces) == 3:
-               dnsopt_to_values[opt_pieces[1]].append(opt_pieces[2])
+            opt_pieces = foreign_opt.split()
+            if len(opt_pieces) == 3:
+                dnsopt_to_values[opt_pieces[1]].append(opt_pieces[2])
         i += 1
     return dnsopt_to_values
+
+
+def write_resolvconf(outfile, opts):
+    """Write a resolv.conf file from DHCP options."""
+    MAX_NAMESERVERS = 3
+    MAX_SEARCH_DOMAINS = 6
+    MAX_SEARCH_LEN = 256
+
+    nameservers = opts['DNS'][:MAX_NAMESERVERS]
+    if len(opts['DOMAIN']) == 1:
+        domain = opts['DOMAIN'][0]
+        search = opts['DOMAIN-SEARCH'][:MAX_SEARCH_DOMAINS]
+    else:
+        domain = None
+        search = (opts['DOMAIN'] + opts['DOMAIN-SEARCH'])[:MAX_SEARCH_DOMAINS]
+
+    search_string = ' '.join(search)
+    if len(search_string) > MAX_SEARCH_LEN:
+        LOG.warning(
+            'Search domains exceed %d-character limit, not writing to resolv.conf' %
+            (MAX_SEARCH_LEN,),
+        )
+        search_string = None
+
+    if domain:
+        print('domain', domain, file=outfile)
+    if search_string:
+        print('search', search_string, file=outfile)
+    for addr in nameservers:
+        print('nameserver', addr, file=outfile)
+
+    if not nameservers:
+        LOG.warning('No nameservers were set')
 
 
 def setup_dns(namespace, dns_type):
     """Write a namespaced resolv.conf at /etc/netns/${NAMESPACE}/resolv.conf."""
     etc_namespace = os.path.join('/etc/netns', namespace)
     etc_resolvconf = os.path.join(etc_namespace, 'resolv.conf')
+    if not os.path.isdir(etc_namespace):
+        os.makedirs(etc_namespace, 0o755)
 
-    MAX_NAMESERVERS = 3
-    MAX_SEARCH_DOMAINS = 6
-
-    def write_resolvconf(opts):
-        if not os.path.isdir(etc_namespace):
-            os.makedirs(etc_namespace, 0o755)
-
-        nameservers = opts['DNS'][:MAX_NAMESERVERS]
-        if len(opts['DOMAIN']) == 1:
-            domain = opts['DOMAIN'][0]
-            search = opts['DOMAIN-SEARCH'][:MAX_SEARCH_DOMAINS]
+    with open(etc_resolvconf, 'w') as outfile:
+        if dns_type == 'push':
+            write_resolvconf(outfile, parse_dhcp_opts(os.environ))
         else:
-            domain = None
-            search = (opts['DOMAIN'] + opts['DOMAIN-SEARCH'])[:MAX_SEARCH_DOMAINS]
-        with open(etc_resolvconf, 'w') as outfile:
-            if domain:
-                print('domain', domain, file=outfile)
-            if search:
-                print('search', ' '.join(search), file=outfile)
-            for addr in opts['DNS'][:MAX_NAMESERVERS]:
-                print('nameserver', addr, file=outfile)
-        if not nameservers:
-            LOG.warning('No nameservers were set')
-
-    if dns_type == 'push':
-        write_resolvconf(parse_dhcp_opts(os.environ))
-    else:
-        nameservers = [addr.strip() for addr in dns_type.split(',')]
-        write_resolvconf({'DNS': nameservers, 'DOMAIN': [], 'DOMAIN-SEARCH': []})
+            nameservers = [addr.strip() for addr in dns_type.split(',')]
+            write_resolvconf(
+                outfile,
+                {'DNS': nameservers, 'DOMAIN': [], 'DOMAIN-SEARCH': []}
+            )
 
 
 def route_up(args):
@@ -196,11 +214,13 @@ class InvalidArgs(ValueError):
 
 def parse_validate_args(cl_args):
     parser = argparse.ArgumentParser(usage='%(prog)s [openvpn options]')
-    parser.add_argument("--namespace",
+    parser.add_argument(
+        "--namespace",
         help="Name of target network namespace (default: `%s`)" % (DEFAULT_NAMESPACE,),
         default=DEFAULT_NAMESPACE
     )
-    parser.add_argument("--dns", default="push", help="""
+    parser.add_argument(
+        "--dns", default="push", help="""
         Set DNS in the namespace. By default, attempt to set nameservers from
         from server-pushed DHCP options. Anything else will be interpreted
         as a comma-delimited list of IPv4 nameserver addresses."""
@@ -245,6 +265,7 @@ def parse_validate_args(cl_args):
         preexisting_routeup = B64_EMPTY_SENTINEL
     return args, openvpn_args, preexisting_routeup
 
+
 def main():
     script_type = os.getenv('script_type')
     if script_type == 'route-up':
@@ -265,7 +286,10 @@ def main():
     # there's no legitimate use case for `script-security 3` client-side
     execv_args += ['--script-security', '2']
     # pass our own path as the route-up, with some extra data
-    execv_args += ['--route-up', "%s %s %s %s" % (__file__, args.namespace, args.dns, preexisting_routeup)]
+    execv_args += [
+        '--route-up',
+        '%s %s %s %s' % (__file__, args.namespace, args.dns, preexisting_routeup)
+    ]
 
     os.execv(OPENVPN_CMD, execv_args)
 
