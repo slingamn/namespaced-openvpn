@@ -14,6 +14,7 @@ except ImportError:
 
 from .namespaced_openvpn import parse_dhcp_opts
 from .namespaced_openvpn import parse_validate_args
+from .namespaced_openvpn import routeup_from_config
 from .namespaced_openvpn import write_resolvconf
 
 
@@ -113,6 +114,37 @@ class TestParseValidateArgs(unittest.TestCase):
             base64.b64decode(preexisting_routeup),
             b'/usr/bin/echo 1 2 3',
         )
+
+
+class TestRouteupFromConfig(unittest.TestCase):
+
+    def test_basic(self):
+        mock_config = StringIO(r"""
+remote vpn.example.com 1195
+route-up "/usr/bin/echo 1 2 3"
+down down.sh""")
+        self.assertEqual(routeup_from_config(mock_config), "/usr/bin/echo 1 2 3")
+
+    def test_stripping(self):
+        mock_config = StringIO(r"""
+remote vpn.example.com 1195
+down down.sh
+route-up my-route-up_script.sh   """)
+        self.assertEqual(routeup_from_config(mock_config), "my-route-up_script.sh")
+
+    def test_quotes(self):
+        mock_config = StringIO(r"""
+route-up "/usr/bin/echo 1 '2 3' 4"
+down down.sh""")
+        self.assertEqual(routeup_from_config(mock_config), "/usr/bin/echo 1 '2 3' 4")
+
+    def test_bad(self):
+        # missing end-quote
+        mock_config = StringIO(r"""
+route-up "/usr/bin/echo 1 '2 3' 4
+down down.sh""")
+        with self.assertRaises(ValueError):
+            routeup_from_config(mock_config)
 
 
 if __name__ == '__main__':

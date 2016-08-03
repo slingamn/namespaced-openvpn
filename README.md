@@ -111,7 +111,7 @@ To borrow a phrase from Stroustrup, `namespaced-openvpn` "protects against accid
 
 Bugs:
 
-* `namespaced-openvpn` tries to be a drop-in replacement for `openvpn`, but due to implementation details, `route-up` directives that use multiple levels of quotes or escaping may not be handled correctly.
+* `namespaced-openvpn` tries to be a drop-in replacement for `openvpn`, but due to implementation details, `route-up` directives that use multiple levels of quotes or escaping may not be handled correctly. It is recommended that any `route-up` directive be syntactically valid both as an OpenVPN script directive and as Bourne shell.
 
 Wishlist:
 

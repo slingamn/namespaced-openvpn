@@ -19,12 +19,11 @@ import logging
 import os
 import os.path
 import re
-import shlex
 import subprocess
 import sys
 from collections import defaultdict
 
-VERSION = '0.0.1'
+VERSION = '0.1.0'
 
 LOG = logging.getLogger()
 
@@ -176,34 +175,37 @@ def route_up(args):
 
     if preexisting_routeup != B64_EMPTY_SENTINEL:
         routeup_cmd = base64.b64decode(preexisting_routeup)
-        # openvpn clears $PATH before script execution
-        os.environ['PATH'] = '.'
-        try:
-            subprocess.check_call(routeup_cmd, shell=True)
-        finally:
-            os.unsetenv('PATH')
+        # openvpn uses execv(2), which looks in the current directory, but
+        # subprocess won't (with or without shell=True)
+        if not routeup_cmd.startswith('/'):
+            routeup_cmd = './' + routeup_cmd
+        # XXX i can't figure out how to reimplement openvpn's command lexer,
+        # just toss the command into /bin/sh's maw
+        subprocess.check_call(routeup_cmd, shell=True)
 
     return 0
 
 
-def routeup_from_config(config_file):
+def routeup_from_config(config_file_obj):
     """Extract any preexisting route-up directive from an OpenVPN config."""
     route_up = None
-    with open(config_file) as infile:
-        for line in infile:
-            match = re.match(r'\s*route-up (.*)', line)
-            if match:
-                route_up = match.group(1)
+    for line in config_file_obj:
+        match = re.match(r'\s*route-up (.*)', line)
+        if match:
+            route_up = match.group(1).strip()
     if route_up:
-        # TODO this is not in perfect conformity with openvpn's custom
-        # shell-unquoting code (see the `parse_line` and `argv_printf_arglist`
-        # functions), but it's probably good enough for now. shlex.split
-        # removes one outer layer of quotes (corresponding to openvpn's
-        # config parser, which requires that shell directives only take a single
-        # argument --- so the executable has to be quoted together with its
-        # arguments). After this, we should have a single string that roughly
-        # resembles a shell command.
-        return shlex.split(route_up)[0]
+        # openvpn's config parser requires that script directives only take
+        # a single argument, so the executable has to be quoted together with
+        # its arguments. strip off a layer of " as necessary:
+        if route_up.startswith('"'):
+            # this does not check if the final quote is escaped, but it's fine,
+            # we can be a little more permissive than openvpn itself
+            if route_up.endswith('"'):
+                return route_up[1:-1]
+            else:
+                raise ValueError('Bad route-up directive', route_up)
+        else:
+            return route_up
     else:
         return None
 
@@ -253,9 +255,10 @@ def parse_validate_args(cl_args):
 
     preexisting_routeup = None
     if args.route_up is not None:
-        preexisting_routeup = args.route_up
+        preexisting_routeup = args.route_up.strip()
     elif config_args.config is not None:
-        preexisting_routeup = routeup_from_config(config_args.config)
+        with open(config_args.config) as config_file_obj:
+            preexisting_routeup = routeup_from_config(config_file_obj)
     if preexisting_routeup:
         preexisting_routeup = base64.b64encode(preexisting_routeup.encode('utf-8'))
         # XXX make this the native string type, to match `namespace` and `dns`
