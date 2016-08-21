@@ -175,7 +175,7 @@ def route_up(args):
 
     if preexisting_routeup != B64_EMPTY_SENTINEL:
         routeup_cmd = base64.b64decode(preexisting_routeup)
-        # openvpn uses execv(2), which looks in the current directory, but
+        # openvpn uses execve(2), which looks in the current directory, but
         # subprocess won't (with or without shell=True)
         if not routeup_cmd.startswith('/'):
             routeup_cmd = './' + routeup_cmd

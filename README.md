@@ -35,7 +35,7 @@ The result is a routing table that routes all public IPs over `tun0`, with the e
 
 ### Route injection attacks
 
-Route injection attacks are described by [Perta et al., 2015](https://www.eecs.qmul.ac.uk/~hamed/papers/PETS2015VPN.pdf). A brief example: suppose that you're connected to a VPN, but your physical interface is connected to a malicious local gateway (e.g., a rogue wireless access point). Your DNS server is set to `8.8.8.8`, which is correctly being routed over the VPN. If the local gateway guesses the address of your DNS server, it can force a DHCP renew on your physical interface and then claim that the gateway's IP is `8.8.8.8`. Your DHCP client will then add a route for 8.8.8.8 over the physical interface, allowing interception and modification of your DNS requests.
+Route injection attacks are described by [Perta et al., 2015](https://www.eecs.qmul.ac.uk/~hamed/papers/PETS2015VPN.pdf). A brief example: suppose that you're connected to a VPN, but your physical interface is connected to a malicious local gateway (e.g., a rogue wireless access point). Your DNS server is set to `8.8.8.8`, which is correctly being routed over the VPN. If the local gateway guesses the address of your DNS server, it can force a DHCP renew on your physical interface and then claim that the gateway's IP is `8.8.8.8`. Your DHCP client will then add a route for `8.8.8.8` over the physical interface, allowing interception and modification of your DNS requests.
 
 ### "Port Fail"
 
