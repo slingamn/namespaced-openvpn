@@ -149,11 +149,6 @@ def route_up(args):
         )
     peer_addr = '%s/32' % (route_vpn_gateway,)
 
-    # turn off ipv6 in the target namespace
-    subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        SYSCTL_CMD, '-w', 'net.ipv6.conf.all.disable_ipv6=1'
-    ])
     # transfer the tunnel interface and set it to UP
     subprocess.check_call([IP_CMD, 'link', 'set', dev, 'netns', namespace])
     subprocess.check_call([
