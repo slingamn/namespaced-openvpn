@@ -23,7 +23,7 @@ import subprocess
 import sys
 from collections import defaultdict
 
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 
 LOG = logging.getLogger()
 
