@@ -265,6 +265,7 @@ def parse_validate_args(cl_args):
 
 
 def main():
+    logging.basicConfig()
     script_type = os.getenv('script_type')
     if script_type == 'route-up':
         return route_up(sys.argv[1:])
