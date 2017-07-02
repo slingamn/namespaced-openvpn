@@ -29,6 +29,7 @@ LOG = logging.getLogger()
 
 DEFAULT_NAMESPACE = "protected"
 
+DNSMASQ_CMD = '/usr/sbin/dnsmasq'
 OPENVPN_CMD = '/usr/sbin/openvpn'
 IP_CMD = '/sbin/ip'
 SYSCTL_CMD = '/sbin/sysctl'
@@ -68,7 +69,14 @@ def setup_namespace(namespace):
 def parse_dhcp_opts(env):
     """Parse DNS servers pushed by the server as DHCP options from the env."""
     dnsopt_to_values = defaultdict(list)
-    i = 1
+
+    if os.path.exists(DNSMASQ_CMD):
+        # add local dnsmasq IP address
+        dnsopt_to_values['DNS'].append('127.0.0.1')
+        i = 2
+    else:
+        i = 1
+
     while True:
         foreign_opt = env.get('foreign_option_%d' % (i,))
         if not foreign_opt:
@@ -177,6 +185,14 @@ def route_up(args):
         # XXX i can't figure out how to reimplement openvpn's command lexer,
         # just toss the command into /bin/sh's maw
         subprocess.check_call(routeup_cmd, shell=True)
+
+    if os.path.exists(DNSMASQ_CMD):
+        # set up dnsmasq local dns cache
+        subprocess.check_call([
+            IP_CMD, 'netns', 'exec', namespace,
+            DNSMASQ_CMD, '--bind-interfaces', '--listen-address=127.0.1.1', '--cache-size=500',
+            '--proxy-dnssec', '--pid-file=/var/run/netns/dnsmasq.pid',
+        ])
 
     return 0
 
