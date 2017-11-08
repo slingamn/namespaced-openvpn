@@ -3,7 +3,9 @@ namespaced-openvpn
 
 `namespaced-openvpn` is a wrapper script for OpenVPN on Linux that uses network namespaces to solve a variety of deanonymization, information disclosure, and usability issues.
 
+    # create an openvpn tunnel in a new namespace, named `protected` by default:
     sudo /path/to/namespaced-openvpn --config ./my_openvpn_config_file
+    # start an unprivileged shell in the new namespace:
     sudo ip netns exec protected sudo -u $USER -i
 
 The main implementation idea of `namespaced-openvpn` is this: instead of connecting a network namespace to the physical network using virtual Ethernet adapters and bridging, it suffices to transfer a tunnel interface into the namespace, while the process managing the tunnel (in this case `openvpn`) remains in the root namespace.
@@ -103,9 +105,19 @@ The other privacy issues have relatively standard mitigations. To wit, route inj
 
 ## Caveats
 
-This is alpha software. It has only been tested with a few VPN configurations, and with very new versions of OpenVPN (2.3.11) and the Linux kernel (4.6). If privacy is critical for your use case and you're not comfortable with monitoring that `namespaced-openvpn` is working as expected, I can't recommend it yet.
+This is relatively new software. It has only been tested with a few VPN configurations, and with modern versions of OpenVPN (>=2.3.11) and the Linux kernel (>=4.6). If privacy is critical for your use case and you're not comfortable with monitoring that `namespaced-openvpn` is working as expected, I can't recommend it yet. (You can use tools like `iftop` and `ss`, in the root namespace and the protected namespace, to verify that your traffic is being routed correctly over the VPN.)
 
 To borrow a phrase from Stroustrup, `namespaced-openvpn` "protects against accident, not against fraud." It should be impossible for any normal application to have its traffic escape from the protected namespace back to the physical interface. However, without additional hardening, there is no guarantee that a malicious application can't force such an escape --- therefore, `namespaced-openvpn` should not be used by itself to "jail" an untrusted application.
+
+## Starting applications in the new namespace
+
+There are a few different ways to launch applications in the new namespace. Unfortunately, none of them is perfect:
+
+1. Commands can be run in the `protected` namespace by prepending them with `sudo ip netns exec protected sudo -u $USER`. The first `sudo` invocation gets root privileges in order to change the namespace, then the second invocation runs the command as the original user. By default, `sudo` has the effect of unsetting most environment variables, which can break some application functionality (e.g., on my system, `XDG_RUNTIME_DIR` must be set correctly for Pulseaudio to work). This can be fixed by adding the `-E` option to both `sudo` invocations: `sudo -E ip netns exec protected sudo -E -u $USER`
+1. In addition to its jail functionality, [firejail](https://github.com/netblue30/firejail) can easily launch applications in named network namespaces using its `--netns=` option, e.g., `firejail --netns=protected firefox`. I use `firejail` personally, but I'm hesitant about recommending it to others due to [concerns](http://www.openwall.com/lists/oss-security/2017/01/05/4) that have been raised about its architecture.
+1. [bubblewrap](https://github.com/projectatomic/bubblewrap) is a more conservative approach to the same problem as `firejail`. It works with the double-sudo technique; see [this recipe](https://eklitzke.org/sandboxing-firefox-with-bubblewrap) as an example for jailing Firefox.
+
+It might be helpful to set up a trusted script or binary, with either a `sudoers(5)` entry or `CAP_SYS_ADMIN`, that can be used to enter the protected namespace but not to re-enter the root namespace, but I haven't fully investigated this.
 
 ## TODO
 
