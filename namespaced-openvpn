@@ -1,5 +1,4 @@
 #!/usr/bin/python
-
 """
 Wrap openvpn to run across two network namespaces:
 
@@ -44,6 +43,7 @@ def _adapter_names(namespace=None):
     if namespace is not None:
         cmd = [IP_CMD, 'netns', 'exec', namespace] + cmd
     output = subprocess.check_output(cmd)
+    # flake8: noqa
     # example line of output:
     # 2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP [...]
     matches = re.finditer(br'^[0-9]+: (.+):', output, re.MULTILINE)
@@ -55,13 +55,13 @@ def setup_namespace(namespace):
     if os.path.exists(os.path.join('/var/run/netns', namespace)):
         adapters = _adapter_names(namespace)
         if adapters != [b'lo']:
-            LOG.error('Namespace %s already has adapters %s, exiting.' % (namespace, adapters))
+            LOG.error('Namespace %s already has adapters %s, exiting.' %
+                      (namespace, adapters))
             raise Exception
     else:
         subprocess.check_call([IP_CMD, 'netns', 'add', namespace])
     subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'link', 'set', 'lo', 'up'
+        IP_CMD, 'netns', 'exec', namespace, IP_CMD, 'link', 'set', 'lo', 'up'
     ])
 
 
@@ -70,7 +70,7 @@ def parse_dhcp_opts(env):
     dnsopt_to_values = defaultdict(list)
     i = 1
     while True:
-        foreign_opt = env.get('foreign_option_%d' % (i,))
+        foreign_opt = env.get('foreign_option_%d' % (i, ))
         if not foreign_opt:
             break
         # e.g., foreign_option_1=dhcp-option DNS 8.8.8.8
@@ -98,10 +98,8 @@ def write_resolvconf(outfile, opts):
 
     search_string = ' '.join(search)
     if len(search_string) > MAX_SEARCH_LEN:
-        LOG.warning(
-            'Search domains exceed %d-character limit, not writing to resolv.conf' %
-            (MAX_SEARCH_LEN,),
-        )
+        LOG.warning('Search domains exceed %d-character limit, '
+                    'not writing to resolv.conf' % (MAX_SEARCH_LEN, ), )
         search_string = None
 
     if domain:
@@ -116,7 +114,11 @@ def write_resolvconf(outfile, opts):
 
 
 def setup_dns(namespace, dns_type):
-    """Write a namespaced resolv.conf at /etc/netns/${NAMESPACE}/resolv.conf."""
+    """Write a namespaced resolv.conf.
+
+    The file will be written within the namespace at
+    /etc/netns/${NAMESPACE}/resolv.conf.
+    """
     etc_namespace = os.path.join('/etc/netns', namespace)
     etc_resolvconf = os.path.join(etc_namespace, 'resolv.conf')
     if not os.path.isdir(etc_namespace):
@@ -127,10 +129,11 @@ def setup_dns(namespace, dns_type):
             write_resolvconf(outfile, parse_dhcp_opts(os.environ))
         else:
             nameservers = [addr.strip() for addr in dns_type.split(',')]
-            write_resolvconf(
-                outfile,
-                {'DNS': nameservers, 'DOMAIN': [], 'DOMAIN-SEARCH': []}
-            )
+            write_resolvconf(outfile, {
+                'DNS': nameservers,
+                'DOMAIN': [],
+                'DOMAIN-SEARCH': []
+            })
 
 
 def route_up(args):
@@ -140,30 +143,55 @@ def route_up(args):
     dev = os.getenv('dev')
     # this is the local IP assigned to the tun adapter
     ifconfig_local = os.getenv('ifconfig_local')
-    # this is the default gateway for the tun adapter (typically private IP space)
+    # the default gateway for the tun adapter (typically private IP space)
     route_vpn_gateway = os.getenv('route_vpn_gateway')
     if not all((dev, ifconfig_local, route_vpn_gateway)):
-        raise ValueError(
-            "Bad options pushed from server",
-            dev, ifconfig_local, route_vpn_gateway
-        )
-    peer_addr = '%s/32' % (route_vpn_gateway,)
+        raise ValueError("Bad options pushed from server", dev, ifconfig_local,
+                         route_vpn_gateway)
+    peer_addr = '%s/32' % (route_vpn_gateway, )
 
     # transfer the tunnel interface and set it to UP
     subprocess.check_call([IP_CMD, 'link', 'set', dev, 'netns', namespace])
     subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'link', 'set', dev, 'up',
+        IP_CMD,
+        'netns',
+        'exec',
+        namespace,
+        IP_CMD,
+        'link',
+        'set',
+        dev,
+        'up',
     ])
     # give it its address
     subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev,
+        IP_CMD,
+        'netns',
+        'exec',
+        namespace,
+        IP_CMD,
+        'addr',
+        'add',
+        ifconfig_local,
+        'peer',
+        peer_addr,
+        'dev',
+        dev,
     ])
     # route all traffic over the tunnel
     subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'route', 'add', 'default', 'via', route_vpn_gateway, 'src', ifconfig_local,
+        IP_CMD,
+        'netns',
+        'exec',
+        namespace,
+        IP_CMD,
+        'route',
+        'add',
+        'default',
+        'via',
+        route_vpn_gateway,
+        'src',
+        ifconfig_local,
     ])
 
     setup_dns(namespace, dns_type)
@@ -213,16 +241,18 @@ def parse_validate_args(cl_args):
     parser = argparse.ArgumentParser(usage='%(prog)s [openvpn options]')
     parser.add_argument(
         "--namespace",
-        help="Name of target network namespace (default: `%s`)" % (DEFAULT_NAMESPACE,),
-        default=DEFAULT_NAMESPACE
-    )
+        help="Name of target network namespace (default: `%s`)" %
+        (DEFAULT_NAMESPACE, ),
+        default=DEFAULT_NAMESPACE)
     parser.add_argument(
-        "--dns", default="push", help="""
+        "--dns",
+        default="push",
+        help="""
         Set DNS in the namespace. By default, attempt to set nameservers from
         from server-pushed DHCP options. Anything else will be interpreted
-        as a comma-delimited list of IPv4 nameserver addresses."""
-    )
-    parser.add_argument("--version", action='store_true', help="Print version and exit")
+        as a comma-delimited list of IPv4 nameserver addresses.""")
+    parser.add_argument(
+        "--version", action='store_true', help="Print version and exit")
     # hidden argument so we can capture any preexisting route-up
     parser.add_argument('--route-up', help=argparse.SUPPRESS, dest='route_up')
     args, openvpn_args = parser.parse_known_args(cl_args)
@@ -237,7 +267,7 @@ def parse_validate_args(cl_args):
         error = 'Invalid DNS string'
     if error:
         parser.print_help()
-        print('namespaced-openvpn: error: %s' % (error,))
+        print('namespaced-openvpn: error: %s' % (error, ))
         raise InvalidArgs
 
     # see if they passed --config, so we can extract any route-up command.
@@ -255,7 +285,8 @@ def parse_validate_args(cl_args):
         with open(config_args.config) as config_file_obj:
             preexisting_routeup = routeup_from_config(config_file_obj)
     if preexisting_routeup:
-        preexisting_routeup = base64.b64encode(preexisting_routeup.encode('utf-8'))
+        preexisting_routeup = base64.b64encode(
+            preexisting_routeup.encode('utf-8'))
         # XXX make this the native string type, to match `namespace` and `dns`
         if sys.version_info[0] == 3:
             preexisting_routeup = preexisting_routeup.decode('ascii')
@@ -271,7 +302,8 @@ def main():
         return route_up(sys.argv[1:])
 
     try:
-        args, openvpn_args, preexisting_routeup = parse_validate_args(sys.argv[1:])
+        args, openvpn_args, preexisting_routeup = parse_validate_args(
+            sys.argv[1:])
     except InvalidArgs:
         return 1
 
@@ -287,7 +319,8 @@ def main():
     # pass our own path as the route-up, with some extra data
     execv_args += [
         '--route-up',
-        '%s %s %s %s' % (__file__, args.namespace, args.dns, preexisting_routeup)
+        '%s %s %s %s' % (__file__, args.namespace, args.dns,
+                         preexisting_routeup)
     ]
 
     os.execv(OPENVPN_CMD, execv_args)
