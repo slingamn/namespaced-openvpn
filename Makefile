@@ -1,11 +1,9 @@
 .PHONY: test install
 
-LINELEN=99
-
 test:
-	flake8 --max-line-len $(LINELEN) ./namespaced-openvpn tests/
-	python3-flake8 --max-line-len $(LINELEN) ./namespaced-openvpn tests/
-	python -m unittest discover
+	python2 -m flake8 ./namespaced-openvpn tests/
+	python3 -m flake8 ./namespaced-openvpn tests/
+	python2 -m unittest discover
 	python3 -m unittest discover
 
 install:
