@@ -90,6 +90,13 @@ The new, isolated namespace will be named `protected` by default. Start an unpri
 
 Any applications started from this shell will inherit the namespace.
 
+The [Wireguard documentation](https://www.wireguard.com/netns/) describes a technique where the physical interface is moved into an isolated network namespace (named, e.g., `physical`), then a tunnel is used as the sole source of connectivity for the *root* namespace. `namespaced-openvpn` supports this configuration as well: pass the empty string as the namespace (e.g., `--namespace ''`).
+
+`namespaced-openvpn` can also be used to "stack" VPN tunnels, e.g.,
+
+    sudo namespaced-openvpn --namespace levelone --config ./config_one
+    sudo ip netns exec levelone namespaced-openvpn --namespace leveltwo --config ./config_two
+
 ## seal-unseal-gateway
 Unfortunately, `namespaced-openvpn` sacrifices one of the traditional strengths of VPNs as privacy tools: it is relatively prone to user error, because the user must be careful to start any sensitive applications in the protected namespace. Processes running in the root namespace receive no protection. Therefore, it's worth presenting an alternative approach, one applicable to a traditional configuration that alters routes in the root namespace.
 
@@ -105,7 +112,7 @@ The other privacy issues have relatively standard mitigations. To wit, route inj
 
 ## Caveats
 
-This is relatively new software. It has only been tested with a few VPN configurations, and with modern versions of OpenVPN (>=2.3.11) and the Linux kernel (>=4.6). If privacy is critical for your use case and you're not comfortable with monitoring that `namespaced-openvpn` is working as expected, I can't recommend it yet. (You can use tools like `iftop` and `ss`, in the root namespace and the protected namespace, to verify that your traffic is being routed correctly over the VPN.)
+This is relatively new software. It has only been tested with a few VPN configurations, and with modern versions of OpenVPN (>=2.3.11) and the Linux kernel (>=4.4). If privacy is critical for your use case and you're not comfortable with monitoring that `namespaced-openvpn` is working as expected, I can't recommend it yet. (You can use tools like `iftop` and `ss`, in the root namespace and the protected namespace, to verify that your traffic is being routed correctly over the VPN.)
 
 To borrow a phrase from Stroustrup, `namespaced-openvpn` "protects against accident, not against fraud." It should be impossible for any normal application to have its traffic escape from the protected namespace back to the physical interface. However, without additional hardening, there is no guarantee that a malicious application can't force such an escape --- therefore, `namespaced-openvpn` should not be used by itself to "jail" an untrusted application.
 

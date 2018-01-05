@@ -21,9 +21,10 @@ import os.path
 import re
 import subprocess
 import sys
+import tempfile
 from collections import defaultdict
 
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 
 LOG = logging.getLogger()
 
@@ -31,18 +32,30 @@ DEFAULT_NAMESPACE = "protected"
 
 OPENVPN_CMD = '/usr/sbin/openvpn'
 IP_CMD = '/sbin/ip'
-SYSCTL_CMD = '/sbin/sysctl'
+NSENTER_CMD = '/usr/bin/nsenter'
+MOUNT_CMD = '/bin/mount'
+UMOUNT_CMD = '/bin/umount'
 
 # Python thinks this is valid b64 for the empty string,
 # but this may not be universal
 B64_EMPTY_SENTINEL = '='
 
 
-def _adapter_names(namespace=None):
+def _enter_namespace_cmd(namespace):
+    """Generate a prefix for a command so that it will execute in `namespace`."""
+    if namespace is None:
+        return []
+    elif namespace == '':
+        # the root namespace is not named so it cannot be entered with ip-netns
+        # we need to reset the mount namespace as well for unclear reasons
+        return [NSENTER_CMD, '-m', '-n', '-t', '1', '--']
+    else:
+        return [IP_CMD, 'netns', 'exec', namespace]
+
+
+def _adapter_names(namespace):
     """Parse `ip link show` output and get the interface names."""
-    cmd = [IP_CMD, 'link', 'show']
-    if namespace is not None:
-        cmd = [IP_CMD, 'netns', 'exec', namespace] + cmd
+    cmd = _enter_namespace_cmd(namespace) + [IP_CMD, 'link', 'show']
     output = subprocess.check_output(cmd)
     # example line of output:
     # 2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP [...]
@@ -58,11 +71,8 @@ def setup_namespace(namespace):
             LOG.error('Namespace %s already has adapters %s, exiting.' % (namespace, adapters))
             raise Exception
     else:
-        subprocess.check_call([IP_CMD, 'netns', 'add', namespace])
-    subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'link', 'set', 'lo', 'up'
-    ])
+        subprocess.check_call(_enter_namespace_cmd('') + [IP_CMD, 'netns', 'add', namespace])
+    subprocess.check_call(_enter_namespace_cmd(namespace) + [IP_CMD, 'link', 'set', 'lo', 'up'])
 
 
 def parse_dhcp_opts(env):
@@ -117,20 +127,35 @@ def write_resolvconf(outfile, opts):
 
 def setup_dns(namespace, dns_type):
     """Write a namespaced resolv.conf at /etc/netns/${NAMESPACE}/resolv.conf."""
-    etc_namespace = os.path.join('/etc/netns', namespace)
-    etc_resolvconf = os.path.join(etc_namespace, 'resolv.conf')
-    if not os.path.isdir(etc_namespace):
-        os.makedirs(etc_namespace, 0o755)
+    if dns_type == 'push':
+        resolv_data = parse_dhcp_opts(os.environ)
+    else:
+        nameservers = [addr.strip() for addr in dns_type.split(',')]
+        resolv_data = {'DNS': nameservers, 'DOMAIN': [], 'DOMAIN-SEARCH': []}
 
-    with open(etc_resolvconf, 'w') as outfile:
-        if dns_type == 'push':
-            write_resolvconf(outfile, parse_dhcp_opts(os.environ))
-        else:
-            nameservers = [addr.strip() for addr in dns_type.split(',')]
-            write_resolvconf(
-                outfile,
-                {'DNS': nameservers, 'DOMAIN': [], 'DOMAIN-SEARCH': []}
-            )
+    mountdir = None
+    if namespace != '':
+        etc_namespace = os.path.join('/etc/netns', namespace)
+        etc_resolvconf = os.path.join(etc_namespace, 'resolv.conf')
+        if not os.path.isdir(etc_namespace):
+            os.makedirs(etc_namespace, 0o755)
+    else:
+        # https://superuser.com/a/389262
+        # we may be running under `ip netns exec`, so we need to access the underlying
+        # /etc/resolv.conf file, which may be shadowed by a current bind mount.
+        # to bypass this, create a new, nonrecursive bind mount of /, then access
+        # etc/resolv.conf under that path.
+        mountdir = tempfile.mkdtemp()
+        subprocess.check_call([MOUNT_CMD, '--bind', '/', mountdir])
+        etc_resolvconf = os.path.join(mountdir, 'etc/resolv.conf')
+
+    try:
+        with open(etc_resolvconf, 'w') as outfile:
+            write_resolvconf(outfile, resolv_data)
+    finally:
+        if mountdir is not None:
+            subprocess.check_call([UMOUNT_CMD, mountdir])
+            os.rmdir(mountdir)
 
 
 def route_up(args):
@@ -150,21 +175,22 @@ def route_up(args):
     peer_addr = '%s/32' % (route_vpn_gateway,)
 
     # transfer the tunnel interface and set it to UP
-    subprocess.check_call([IP_CMD, 'link', 'set', dev, 'netns', namespace])
-    subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'link', 'set', dev, 'up',
-    ])
+    target = namespace if namespace != '' else '1'
+    subprocess.check_call([IP_CMD, 'link', 'set', dev, 'netns', target])
+    subprocess.check_call(
+        _enter_namespace_cmd(namespace) +
+        [IP_CMD, 'link', 'set', dev, 'up']
+    )
     # give it its address
-    subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev,
-    ])
+    subprocess.check_call(
+        _enter_namespace_cmd(namespace) +
+        [IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev]
+    )
     # route all traffic over the tunnel
-    subprocess.check_call([
-        IP_CMD, 'netns', 'exec', namespace,
-        IP_CMD, 'route', 'add', 'default', 'via', route_vpn_gateway, 'src', ifconfig_local,
-    ])
+    subprocess.check_call(
+        _enter_namespace_cmd(namespace) +
+        [IP_CMD, 'route', 'add', 'default', 'via', route_vpn_gateway, 'src', ifconfig_local]
+    )
 
     setup_dns(namespace, dns_type)
 
@@ -213,7 +239,8 @@ def parse_validate_args(cl_args):
     parser = argparse.ArgumentParser(usage='%(prog)s [openvpn options]')
     parser.add_argument(
         "--namespace",
-        help="Name of target network namespace (default: `%s`)" % (DEFAULT_NAMESPACE,),
+        help="""Name of target network namespace (default: `%s`). For the root namespace,
+        pass the empty string.""" % (DEFAULT_NAMESPACE,),
         default=DEFAULT_NAMESPACE
     )
     parser.add_argument(
@@ -285,9 +312,10 @@ def main():
     # there's no legitimate use case for `script-security 3` client-side
     execv_args += ['--script-security', '2']
     # pass our own path as the route-up, with some extra data
+    namespace = args.namespace if args.namespace != "" else '""'
     execv_args += [
         '--route-up',
-        '%s %s %s %s' % (__file__, args.namespace, args.dns, preexisting_routeup)
+        '%s %s %s %s' % (__file__, namespace, args.dns, preexisting_routeup)
     ]
 
     os.execv(OPENVPN_CMD, execv_args)
