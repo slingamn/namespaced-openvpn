@@ -69,12 +69,13 @@ This is a usability issue, rather than a privacy issue, but it stems from the sa
 
 The [network namespace](https://lwn.net/Articles/580893/) functionality of Linux provides, in effect, additional isolated copies of the entire kernel networking stack. The idea behind `namespaced-openvpn` is this: the `openvpn` process itself can run in the root namespace, but its tunnel interface `tun0` can be transferred into a new, protected network namespace. This new namespace will have the loopback adapter `lo` and `tun0` as its only interfaces, and all non-localhost traffic will be routed over `tun0`. The `openvpn` process is not disrupted by this because it communicates with `tun0` via the file descriptor it opened to `/dev/net/tun`, which is unaffected by the change of namespace.
 
-As long as sensitive applications are correctly launched within the new, isolated namespace, all of the enumerated issues are systematically resolved:
+As long as sensitive applications are correctly launched within the new, isolated namespace, most of the enumerated issues are systematically resolved:
 
-1. Route injection is impossible because `NetworkManager`, `dhclient`, etc. are running in the root namespace, so they can respond to any change in the external network environment without affecting the protected namespace. In essence, this is a separation of concerns: the root namespace is tasked with maintaining *connectivity*, including interfacing with untrusted DHCP and DNS servers, while the protected namespace is tasked with maintaining privacy.
+1. Route injection is impossible because `NetworkManager`, `dhclient`, etc. are running in the root namespace, so they can respond to routing changes in the external network environment without affecting the protected namespace.
 2. "Port Fail" is blocked because the protected namespace has no routing exception for the remote gateway: every packet must go to `tun0`.
-3. Asymmetric routing attacks, IPv6 leaks, and DNS leaks are all blocked because the protected namespace has no access to any physical interface.
+3. Asymmetric routing attacks and IPv6 leaks are blocked because the protected namespace has no access to any physical interface.
 4. The `openvpn` process can freely restart because it runs in the root namespace, which has unmodified routes --- so its DNS request for the remote, and then its handshake with the resulting remote IP, all use `eth0`.
+5. Accidental DNS leaks via LAN resolvers are typically blocked because the protected namespace has no direct layer-3 access to the LAN. However, additional hardening is needed to protect against some attacks and leaks --- see the "DNS hardening" section below.
 
 This approach has some further strengths:
 
@@ -99,6 +100,22 @@ The [Wireguard documentation](https://www.wireguard.com/netns/) describes a tech
 
     sudo namespaced-openvpn --namespace levelone --config ./config_one
     sudo ip netns exec levelone namespaced-openvpn --namespace leveltwo --config ./config_two
+
+## DNS hardening
+
+Name resolution is unfortunately a complex issue, presenting several hardening challenges. Here are two known issues:
+
+1. Due to limitations in the implementation of `ip-netns(8)` and the semantics of bind mounts on Linux, `namespaced-openvpn` running on a typical Linux system is still vulnerable to certain active attacks against DNS, affecting both confidentiality and integrity of DNS queries.
+1. Certain local DNS daemons can allow DNS queries to escape the namespace.
+
+These problems can be fully mitigated in the following way:
+
+1. Disable `systemd-resolved`, `resolvconf`, and `nscd`.
+1. Instead, create `/etc/resolv.conf` as a static file. (A non-mobile system can use a LAN resolver; a mobile system can use one of the standard public resolvers, such as [OpenDNS](https://www.opendns.com/setupguide/) or [1.1.1.1](https://1.1.1.1/).)
+
+The first problem is that `ip netns exec` masks `/etc/resolv.conf` inside the namespace by bind-mounting `/etc/netns/${namespace}/resolv.conf` on top of it. Due to a [an implementation detail of the bind mount system](https://lwn.net/Articles/570338/), if the inode of the mountpoint `/etc/resolv.conf` changes in the root mount namespace, the bind mount will silently disappear in the protected namespace, uncovering the external `/etc/resolv.conf`. Consequently, on a system configured to use `resolvconf(8)` or a similar mechanism for automatically rewriting `/etc/resolv.conf` in response to DHCP changes, an active attacker can inject a malicious *publicly-routable* DNS server into `/etc/resolv.conf` inside the namespace. DNS queries to this server will be routed correctly over the VPN, but since the attacker controls the server, confidentiality and integrity are still violated. This attack is fully mitigated if `/etc/resolv.conf` cannot be rewritten, i.e., if it is maintained as a static file.
+
+[systemd-resolved](https://www.freedesktop.org/software/systemd/man/systemd-resolved.service.html) presents a different problem; like the earlier [nscd](https://linux.die.net/man/8/nscd), it provides name resolution over UNIX domain sockets (via D-Bus), which can cross network namespace boundaries. That is to say, a name resolution inside the protected namespace may be delegated to a `systemd-resolved` instance running outside it, which will then issue a DNS request in cleartext. This is similar to a conventional DNS leak. Although most systems and applications are not yet using this functionality, we recommend against using `systemd-resolved` for this reason.
 
 ## seal-unseal-gateway
 Unfortunately, `namespaced-openvpn` sacrifices one of the traditional strengths of VPNs as privacy tools: it is relatively prone to user error, because the user must be careful to start any sensitive applications in the protected namespace. Processes running in the root namespace receive no protection. Therefore, it's worth presenting an alternative approach, one applicable to a traditional configuration that alters routes in the root namespace.
