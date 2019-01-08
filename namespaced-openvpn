@@ -84,6 +84,7 @@ def parse_dhcp_opts(env):
         if not foreign_opt:
             break
         # e.g., foreign_option_1=dhcp-option DNS 8.8.8.8
+        # or    foreign_option_1=dhcp-option DNS6 2001:4860:4860::8888
         if foreign_opt.startswith('dhcp-option'):
             opt_pieces = foreign_opt.split()
             if len(opt_pieces) == 3:
@@ -98,7 +99,8 @@ def write_resolvconf(outfile, opts):
     MAX_SEARCH_DOMAINS = 6
     MAX_SEARCH_LEN = 256
 
-    nameservers = opts['DNS'][:MAX_NAMESERVERS]
+    # Treat IPv6 nameservers the same as IPv4 nameservers
+    nameservers = (opts['DNS'] + opts['DNS6'])[:MAX_NAMESERVERS]
     if len(opts['DOMAIN']) == 1:
         domain = opts['DOMAIN'][0]
         search = opts['DOMAIN-SEARCH'][:MAX_SEARCH_DOMAINS]
@@ -157,40 +159,71 @@ def setup_dns(namespace, dns_type):
             subprocess.check_call([UMOUNT_CMD, mountdir])
             os.rmdir(mountdir)
 
+def assert_all_or_none(message, *variables):
+    if any(variables) and not all(variables):
+        raise ValueError(message, *variables)
+    return any(variables)
 
 def route_up(args):
     """Active ingredient: set up routing and DNS in the new namespace."""
     namespace, dns_type, preexisting_routeup = args
 
     dev = os.getenv('dev')
-    # this is the local IP assigned to the tun adapter
+
+    if not dev:
+        raise ValueError("Missing dev environment variable")
+
+    # this is the local IPv4 assigned to the tun adapter
     ifconfig_local = os.getenv('ifconfig_local')
     # this is the default gateway for the tun adapter (typically private IP space)
     route_vpn_gateway = os.getenv('route_vpn_gateway')
-    if not all((dev, ifconfig_local, route_vpn_gateway)):
-        raise ValueError(
-            "Bad options pushed from server",
-            dev, ifconfig_local, route_vpn_gateway
-        )
-    peer_addr = '%s/32' % (route_vpn_gateway,)
 
-    # transfer the tunnel interface and set it to UP
+    ifconfig_ipv6_local = os.getenv('ifconfig_ipv6_local')
+    ifconfig_ipv6_remote = os.getenv('ifconfig_ipv6_remote')
+    ifconfig_ipv6_netbits = os.getenv('ifconfig_ipv6_netbits')
+
+    have_ipv4 = assert_all_or_none(
+        "Bad ipv4 options pushed from server", ifconfig_local, route_vpn_gateway
+    )
+    have_ipv6 = assert_all_or_none(
+        "Bad ipv6 options pushed from server",
+        ifconfig_ipv6_local, ifconfig_ipv6_remote, ifconfig_ipv6_netbits
+    )
+
+    if not have_ipv4 and not have_ipv6:
+        raise ValueError("Got neither ipv4 nor ipv6 configuration from server")
+
     target = namespace if namespace != '' else '1'
     subprocess.check_call([IP_CMD, 'link', 'set', dev, 'netns', target])
     subprocess.check_call(
         _enter_namespace_cmd(namespace) +
         [IP_CMD, 'link', 'set', dev, 'up']
     )
-    # give it its address
-    subprocess.check_call(
-        _enter_namespace_cmd(namespace) +
-        [IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev]
-    )
-    # route all traffic over the tunnel
-    subprocess.check_call(
-        _enter_namespace_cmd(namespace) +
-        [IP_CMD, 'route', 'add', 'default', 'via', route_vpn_gateway, 'src', ifconfig_local]
-    )
+
+    if have_ipv4:
+        peer_addr = '%s/32' % (route_vpn_gateway,)
+        # transfer the tunnel interface and set it to UP
+        # give it its ipv4 address
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev]
+        )
+        # route all traffic over the tunnel
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, 'route', 'add', 'default', 'via', route_vpn_gateway, 'src', ifconfig_local]
+        )
+
+    if have_ipv6:
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, 'addr', 'add', ifconfig_ipv6_local, 'peer',
+            ('%s/%s' % (ifconfig_ipv6_remote, ifconfig_ipv6_netbits)), 'dev', dev]
+        )
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, '-6', 'route', 'add', 'default', 'dev', dev]
+        )
 
     setup_dns(namespace, dns_type)
 

@@ -154,5 +154,4 @@ Bugs:
 
 Wishlist:
 
-* Support for tunnelling IPv6 (when the remote VPN provider offers it).
 * Ideally, there would be an option to offer both limited protection to the root namespace (e.g., without protecting against route injection) and full protection to an isolated namespace. This seems difficult to achieve in a nondisruptive way.
