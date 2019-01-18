@@ -133,7 +133,8 @@ def setup_dns(namespace, dns_type):
         resolv_data = parse_dhcp_opts(os.environ)
     else:
         nameservers = [addr.strip() for addr in dns_type.split(',')]
-        resolv_data = {'DNS': nameservers, 'DOMAIN': [], 'DOMAIN-SEARCH': []}
+        # XXX pass ipv6 nameservers under the 'DNS' option, we treat them the same
+        resolv_data = {'DNS': nameservers, 'DNS6': [], 'DOMAIN': [], 'DOMAIN-SEARCH': []}
 
     mountdir = None
     if namespace != '':
@@ -159,10 +160,12 @@ def setup_dns(namespace, dns_type):
             subprocess.check_call([UMOUNT_CMD, mountdir])
             os.rmdir(mountdir)
 
+
 def assert_all_or_none(message, *variables):
     if any(variables) and not all(variables):
         raise ValueError(message, *variables)
     return any(variables)
+
 
 def route_up(args):
     """Active ingredient: set up routing and DNS in the new namespace."""
@@ -193,6 +196,7 @@ def route_up(args):
     if not have_ipv4 and not have_ipv6:
         raise ValueError("Got neither ipv4 nor ipv6 configuration from server")
 
+    # transfer the tunnel interface and set it to UP
     target = namespace if namespace != '' else '1'
     subprocess.check_call([IP_CMD, 'link', 'set', dev, 'netns', target])
     subprocess.check_call(
@@ -202,7 +206,6 @@ def route_up(args):
 
     if have_ipv4:
         peer_addr = '%s/32' % (route_vpn_gateway,)
-        # transfer the tunnel interface and set it to UP
         # give it its ipv4 address
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
@@ -211,14 +214,15 @@ def route_up(args):
         # route all traffic over the tunnel
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
-            [IP_CMD, 'route', 'add', 'default', 'via', route_vpn_gateway, 'src', ifconfig_local]
+            [IP_CMD, 'route', 'add', 'default', 'dev', dev]
         )
 
     if have_ipv6:
+        # analogous steps for ipv6
+        peer_addr = '%s/%s' % (ifconfig_ipv6_remote, ifconfig_ipv6_netbits)
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
-            [IP_CMD, 'addr', 'add', ifconfig_ipv6_local, 'peer',
-            ('%s/%s' % (ifconfig_ipv6_remote, ifconfig_ipv6_netbits)), 'dev', dev]
+            [IP_CMD, '-6', 'addr', 'add', ifconfig_ipv6_local, 'peer', peer_addr, 'dev', dev]
         )
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
@@ -231,8 +235,8 @@ def route_up(args):
         routeup_cmd = base64.b64decode(preexisting_routeup)
         # openvpn uses execve(2), which looks in the current directory, but
         # subprocess won't (with or without shell=True)
-        if not routeup_cmd.startswith('/'):
-            routeup_cmd = './' + routeup_cmd
+        if not routeup_cmd.startswith(b'/'):
+            routeup_cmd = b'./' + routeup_cmd
         # XXX i can't figure out how to reimplement openvpn's command lexer,
         # just toss the command into /bin/sh's maw
         subprocess.check_call(routeup_cmd, shell=True)
@@ -280,7 +284,7 @@ def parse_validate_args(cl_args):
         "--dns", default="push", help="""
         Set DNS in the namespace. By default, attempt to set nameservers from
         from server-pushed DHCP options. Anything else will be interpreted
-        as a comma-delimited list of IPv4 nameserver addresses."""
+        as a comma-delimited list of IPv4 or IPv6 nameserver addresses."""
     )
     parser.add_argument("--version", action='store_true', help="Print version and exit")
     # hidden argument so we can capture any preexisting route-up
