@@ -1,13 +1,14 @@
 namespaced-openvpn
 ==================
 
-`namespaced-openvpn` is a wrapper script for OpenVPN on Linux that uses network namespaces to solve a variety of deanonymization, information disclosure, and usability issues.
+`namespaced-openvpn` is a wrapper script for OpenVPN on Linux that uses network namespaces to solve a variety of deanonymization, information disclosure, and usability issues. Relative to OpenVPN's default behavior, it can be used to provide additional hardening or additional *isolation* (e.g., running some processes inside a VPN and some outside it, or running multiple VPN sessions concurrently and assigning different processes to different VPNs).
 
 ```bash
 # create an openvpn tunnel in a new namespace, named `protected` by default:
 sudo /path/to/namespaced-openvpn --config ./my_openvpn_config_file
 
-# start an unprivileged shell in the new namespace:
+# start an unprivileged shell in the new namespace
+# anything started from this shell will use the openvpn tunnel exclusively for connectivity:
 sudo ip netns exec protected sudo -u $USER -i
 ```
 
@@ -113,7 +114,7 @@ These problems can be fully mitigated in the following way:
 1. Disable `systemd-resolved`, `resolvconf`, and `nscd`.
 1. Instead, create `/etc/resolv.conf` as a static file. (A non-mobile system can use a LAN resolver; a mobile system can use one of the standard public resolvers, such as [OpenDNS](https://www.opendns.com/setupguide/) or [1.1.1.1](https://1.1.1.1/).)
 
-The first problem is that `ip netns exec` masks `/etc/resolv.conf` inside the namespace by bind-mounting `/etc/netns/${namespace}/resolv.conf` on top of it. Due to a [an implementation detail of the bind mount system](https://lwn.net/Articles/570338/), if the inode of the mountpoint `/etc/resolv.conf` changes in the root mount namespace, the bind mount will silently disappear in the protected namespace, uncovering the external `/etc/resolv.conf`. Consequently, on a system configured to use `resolvconf(8)` or a similar mechanism for automatically rewriting `/etc/resolv.conf` in response to DHCP changes, an active attacker can inject a malicious *publicly-routable* DNS server into `/etc/resolv.conf` inside the namespace. DNS queries to this server will be routed correctly over the VPN, but since the attacker controls the server, confidentiality and integrity are still violated. This attack is fully mitigated if `/etc/resolv.conf` cannot be rewritten, i.e., if it is maintained as a static file.
+The first problem is that `ip netns exec` masks `/etc/resolv.conf` inside the namespace by bind-mounting `/etc/netns/${namespace}/resolv.conf` on top of it. Due to an [implementation detail of the bind mount system](https://lwn.net/Articles/570338/), if the inode of the mountpoint `/etc/resolv.conf` changes in the root mount namespace, the bind mount will silently disappear in the protected namespace, uncovering the external `/etc/resolv.conf`. Consequently, on a system configured to use `resolvconf(8)` or a similar mechanism for automatically rewriting `/etc/resolv.conf` in response to DHCP changes, an active attacker can inject a malicious *publicly-routable* DNS server into `/etc/resolv.conf` inside the namespace. DNS queries to this server will be routed correctly over the VPN, but since the attacker controls the server, confidentiality and integrity are still violated. This attack is fully mitigated if `/etc/resolv.conf` cannot be rewritten, i.e., if it is maintained as a static file.
 
 [systemd-resolved](https://www.freedesktop.org/software/systemd/man/systemd-resolved.service.html) presents a different problem; like the earlier [nscd](https://linux.die.net/man/8/nscd), it provides name resolution over UNIX domain sockets (via D-Bus), which can cross network namespace boundaries. That is to say, a name resolution inside the protected namespace may be delegated to a `systemd-resolved` instance running outside it, which will then issue a DNS request in cleartext. This is similar to a conventional DNS leak. Although most systems and applications are not yet using this functionality, we recommend against using `systemd-resolved` for this reason.
 
