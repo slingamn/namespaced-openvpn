@@ -1,13 +1,14 @@
 namespaced-openvpn
 ==================
 
-`namespaced-openvpn` is a wrapper script for OpenVPN on Linux that uses network namespaces to solve a variety of deanonymization, information disclosure, and usability issues.
+`namespaced-openvpn` is a wrapper script for OpenVPN on Linux that uses network namespaces to solve a variety of deanonymization, information disclosure, and usability issues. Relative to OpenVPN's default behavior, it can be used to provide additional hardening or additional *isolation* (e.g., running some processes inside a VPN and some outside it, or running multiple VPN sessions concurrently and assigning different processes to different VPNs).
 
 ```bash
 # create an openvpn tunnel in a new namespace, named `protected` by default:
 sudo /path/to/namespaced-openvpn --config ./my_openvpn_config_file
 
-# start an unprivileged shell in the new namespace:
+# start an unprivileged shell in the new namespace
+# anything started from this shell will use the openvpn tunnel exclusively for connectivity:
 sudo ip netns exec protected sudo -u $USER -i
 ```
 
