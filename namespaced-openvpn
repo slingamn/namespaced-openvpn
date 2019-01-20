@@ -169,7 +169,8 @@ def assert_all_or_none(message, *variables):
 
 def route_up(args):
     """Active ingredient: set up routing and DNS in the new namespace."""
-    namespace, dns_type, preexisting_routeup = args
+    namespace, dns_type, preexisting_routeup, disable_arg = args
+    disable_ipv4, disable_ipv6 = deserialize_disableargs(disable_arg)
 
     dev = os.getenv('dev')
 
@@ -193,8 +194,10 @@ def route_up(args):
         ifconfig_ipv6_local, ifconfig_ipv6_remote, ifconfig_ipv6_netbits
     )
 
-    if not have_ipv4 and not have_ipv6:
-        raise ValueError("Got neither ipv4 nor ipv6 configuration from server")
+    ipv4_enabled = have_ipv4 and not disable_ipv4
+    ipv6_enabled = have_ipv6 and not disable_ipv6
+    if not ipv4_enabled and not ipv6_enabled:
+        raise ValueError("Both IPv4 and IPv6 are either unavailable or have been disabled")
 
     # transfer the tunnel interface and set it to UP
     target = namespace if namespace != '' else '1'
@@ -204,7 +207,7 @@ def route_up(args):
         [IP_CMD, 'link', 'set', dev, 'up']
     )
 
-    if have_ipv4:
+    if ipv4_enabled:
         peer_addr = '%s/32' % (route_vpn_gateway,)
         # give it its ipv4 address
         subprocess.check_call(
@@ -217,7 +220,7 @@ def route_up(args):
             [IP_CMD, 'route', 'add', 'default', 'dev', dev]
         )
 
-    if have_ipv6:
+    if ipv6_enabled:
         # analogous steps for ipv6
         peer_addr = '%s/%s' % (ifconfig_ipv6_remote, ifconfig_ipv6_netbits)
         subprocess.check_call(
@@ -272,6 +275,24 @@ class InvalidArgs(ValueError):
     pass
 
 
+def serialize_disableargs(disable_ipv4, disable_ipv6):
+    if disable_ipv4:
+        return '4'
+    elif disable_ipv6:
+        return '6'
+    else:
+        return '0'
+
+
+def deserialize_disableargs(arg):
+    if arg == '4':
+        return True, False
+    elif arg == '6':
+        return False, True
+    else:
+        return False, False
+
+
 def parse_validate_args(cl_args):
     parser = argparse.ArgumentParser(usage='%(prog)s [openvpn options]')
     parser.add_argument(
@@ -286,6 +307,14 @@ def parse_validate_args(cl_args):
         from server-pushed DHCP options. Anything else will be interpreted
         as a comma-delimited list of IPv4 or IPv6 nameserver addresses."""
     )
+    parser.add_argument(
+        "--disable-ipv6", action='store_true',
+        help="Disable IPv6 addresses and routes pushed by the server"
+    )
+    parser.add_argument(
+        "--disable-ipv4", action='store_true',
+        help="Disable IPv4 addresses and routes pushed by the server"
+    )
     parser.add_argument("--version", action='store_true', help="Print version and exit")
     # hidden argument so we can capture any preexisting route-up
     parser.add_argument('--route-up', help=argparse.SUPPRESS, dest='route_up')
@@ -299,6 +328,8 @@ def parse_validate_args(cl_args):
         error = 'Invalid namespace'
     elif re.search(r'\s', args.dns):
         error = 'Invalid DNS string'
+    elif args.disable_ipv4 and args.disable_ipv6:
+        error = 'Cannot disable both IPv4 and IPv6'
     if error:
         parser.print_help()
         print('namespaced-openvpn: error: %s' % (error,))
@@ -350,9 +381,10 @@ def main():
     execv_args += ['--script-security', '2']
     # pass our own path as the route-up, with some extra data
     namespace = args.namespace if args.namespace != "" else '""'
+    disable_arg = serialize_disableargs(args.disable_ipv4, args.disable_ipv6)
     execv_args += [
         '--route-up',
-        '%s %s %s %s' % (__file__, namespace, args.dns, preexisting_routeup)
+        '%s %s %s %s %s' % (__file__, namespace, args.dns, preexisting_routeup, disable_arg)
     ]
 
     os.execv(OPENVPN_CMD, execv_args)
