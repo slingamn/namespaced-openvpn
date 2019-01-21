@@ -294,7 +294,8 @@ def deserialize_disableargs(arg):
 
 
 def parse_validate_args(cl_args):
-    parser = argparse.ArgumentParser(usage='%(prog)s [openvpn options]')
+    # XXX implement --help "manually" so as to always display the program version
+    parser = argparse.ArgumentParser(usage='%(prog)s [OPTIONS] OPENVPN_ARGS...', add_help=False)
     parser.add_argument(
         "--namespace",
         help="""Name of target network namespace (default: `%s`). For the root namespace,
@@ -315,24 +316,32 @@ def parse_validate_args(cl_args):
         "--disable-ipv4", action='store_true',
         help="Disable IPv4 addresses and routes pushed by the server"
     )
-    parser.add_argument("--version", action='store_true', help="Print version and exit")
+    parser.add_argument(
+        '-h', '--help',
+        action='store_true',
+        help='show this help message and exit',
+    )
+    parser.add_argument("--version", action='version', version='%(prog)s ' + VERSION)
     # hidden argument so we can capture any preexisting route-up
     parser.add_argument('--route-up', help=argparse.SUPPRESS, dest='route_up')
     args, openvpn_args = parser.parse_known_args(cl_args)
-    if args.version:
-        print("namespaced-openvpn", VERSION)
-        raise InvalidArgs
 
     error = None
-    if re.search(r'\s', args.namespace):
+    if args.help:
+        error = None
+    elif re.search(r'\s', args.namespace):
         error = 'Invalid namespace'
     elif re.search(r'\s', args.dns):
         error = 'Invalid DNS string'
     elif args.disable_ipv4 and args.disable_ipv6:
         error = 'Cannot disable both IPv4 and IPv6'
-    if error:
+    elif len(openvpn_args) == 0:
+        error = 'Must supply arguments to pass to openvpn(8)'
+    if error or args.help:
+        print('namespaced-openvpn', VERSION, end='\n\n')
         parser.print_help()
-        print('namespaced-openvpn: error: %s' % (error,))
+        if error:
+            print('\nnamespaced-openvpn: error: %s' % (error,))
         raise InvalidArgs
 
     # see if they passed --config, so we can extract any route-up command.
