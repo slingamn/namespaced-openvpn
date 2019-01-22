@@ -26,11 +26,13 @@ class TestDHCPOpts(unittest.TestCase):
             'foreign_option_2': 'dhcp-option DNS 8.8.4.4',
             'foreign_option_3': 'dhcp-option DISABLE-NBT',
             'foreign_option_4': 'dhcp-option DOMAIN example.com',
+            'foreign_option_5': 'dhcp-option DNS6 2001:4860:4860::8888',
         }
         self.assertEqual(
             parse_dhcp_opts(env),
             {
                 'DNS': ['8.8.8.8', '8.8.4.4'],
+                'DNS6': ['2001:4860:4860::8888'],
                 'DOMAIN': ['example.com'],
             }
         )
@@ -41,11 +43,12 @@ class TestWriteResolvConf(unittest.TestCase):
     def test_dns_only(self):
         opts = defaultdict(list)
         opts['DNS'] = ['10.0.0.1', '10.0.0.2']
+        opts['DNS6'] = ['2001:4860:4860::8888']
         outfile = StringIO()
         write_resolvconf(outfile, opts)
         self.assertEqual(
             outfile.getvalue(),
-            'nameserver 10.0.0.1\nnameserver 10.0.0.2\n'
+            'nameserver 10.0.0.1\nnameserver 10.0.0.2\nnameserver 2001:4860:4860::8888\n'
         )
 
     def test_domain(self):

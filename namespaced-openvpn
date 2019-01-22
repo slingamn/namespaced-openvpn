@@ -24,7 +24,7 @@ import sys
 import tempfile
 from collections import defaultdict
 
-VERSION = '0.3.0'
+VERSION = '0.4.0'
 
 LOG = logging.getLogger()
 
@@ -84,6 +84,7 @@ def parse_dhcp_opts(env):
         if not foreign_opt:
             break
         # e.g., foreign_option_1=dhcp-option DNS 8.8.8.8
+        # or    foreign_option_1=dhcp-option DNS6 2001:4860:4860::8888
         if foreign_opt.startswith('dhcp-option'):
             opt_pieces = foreign_opt.split()
             if len(opt_pieces) == 3:
@@ -98,7 +99,8 @@ def write_resolvconf(outfile, opts):
     MAX_SEARCH_DOMAINS = 6
     MAX_SEARCH_LEN = 256
 
-    nameservers = opts['DNS'][:MAX_NAMESERVERS]
+    # Treat IPv6 nameservers the same as IPv4 nameservers
+    nameservers = (opts['DNS'] + opts['DNS6'])[:MAX_NAMESERVERS]
     if len(opts['DOMAIN']) == 1:
         domain = opts['DOMAIN'][0]
         search = opts['DOMAIN-SEARCH'][:MAX_SEARCH_DOMAINS]
@@ -131,7 +133,8 @@ def setup_dns(namespace, dns_type):
         resolv_data = parse_dhcp_opts(os.environ)
     else:
         nameservers = [addr.strip() for addr in dns_type.split(',')]
-        resolv_data = {'DNS': nameservers, 'DOMAIN': [], 'DOMAIN-SEARCH': []}
+        # XXX pass ipv6 nameservers under the 'DNS' option, we treat them the same
+        resolv_data = {'DNS': nameservers, 'DNS6': [], 'DOMAIN': [], 'DOMAIN-SEARCH': []}
 
     mountdir = None
     if namespace != '':
@@ -158,21 +161,43 @@ def setup_dns(namespace, dns_type):
             os.rmdir(mountdir)
 
 
+def assert_all_or_none(message, *variables):
+    if any(variables) and not all(variables):
+        raise ValueError(message, *variables)
+    return any(variables)
+
+
 def route_up(args):
     """Active ingredient: set up routing and DNS in the new namespace."""
-    namespace, dns_type, preexisting_routeup = args
+    namespace, dns_type, preexisting_routeup, disable_arg = args
+    disable_ipv4, disable_ipv6 = deserialize_disableargs(disable_arg)
 
     dev = os.getenv('dev')
-    # this is the local IP assigned to the tun adapter
+
+    if not dev:
+        raise ValueError("Missing dev environment variable")
+
+    # this is the local IPv4 assigned to the tun adapter
     ifconfig_local = os.getenv('ifconfig_local')
     # this is the default gateway for the tun adapter (typically private IP space)
     route_vpn_gateway = os.getenv('route_vpn_gateway')
-    if not all((dev, ifconfig_local, route_vpn_gateway)):
-        raise ValueError(
-            "Bad options pushed from server",
-            dev, ifconfig_local, route_vpn_gateway
-        )
-    peer_addr = '%s/32' % (route_vpn_gateway,)
+
+    ifconfig_ipv6_local = os.getenv('ifconfig_ipv6_local')
+    ifconfig_ipv6_remote = os.getenv('ifconfig_ipv6_remote')
+    ifconfig_ipv6_netbits = os.getenv('ifconfig_ipv6_netbits')
+
+    have_ipv4 = assert_all_or_none(
+        "Bad ipv4 options pushed from server", ifconfig_local, route_vpn_gateway
+    )
+    have_ipv6 = assert_all_or_none(
+        "Bad ipv6 options pushed from server",
+        ifconfig_ipv6_local, ifconfig_ipv6_remote, ifconfig_ipv6_netbits
+    )
+
+    ipv4_enabled = have_ipv4 and not disable_ipv4
+    ipv6_enabled = have_ipv6 and not disable_ipv6
+    if not ipv4_enabled and not ipv6_enabled:
+        raise ValueError("Both IPv4 and IPv6 are either unavailable or have been disabled")
 
     # transfer the tunnel interface and set it to UP
     target = namespace if namespace != '' else '1'
@@ -181,16 +206,31 @@ def route_up(args):
         _enter_namespace_cmd(namespace) +
         [IP_CMD, 'link', 'set', dev, 'up']
     )
-    # give it its address
-    subprocess.check_call(
-        _enter_namespace_cmd(namespace) +
-        [IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev]
-    )
-    # route all traffic over the tunnel
-    subprocess.check_call(
-        _enter_namespace_cmd(namespace) +
-        [IP_CMD, 'route', 'add', 'default', 'via', route_vpn_gateway, 'src', ifconfig_local]
-    )
+
+    if ipv4_enabled:
+        peer_addr = '%s/32' % (route_vpn_gateway,)
+        # give it its ipv4 address
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev]
+        )
+        # route all traffic over the tunnel
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, 'route', 'add', 'default', 'dev', dev]
+        )
+
+    if ipv6_enabled:
+        # analogous steps for ipv6
+        peer_addr = '%s/%s' % (ifconfig_ipv6_remote, ifconfig_ipv6_netbits)
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, '-6', 'addr', 'add', ifconfig_ipv6_local, 'peer', peer_addr, 'dev', dev]
+        )
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IP_CMD, '-6', 'route', 'add', 'default', 'dev', dev]
+        )
 
     setup_dns(namespace, dns_type)
 
@@ -198,8 +238,8 @@ def route_up(args):
         routeup_cmd = base64.b64decode(preexisting_routeup)
         # openvpn uses execve(2), which looks in the current directory, but
         # subprocess won't (with or without shell=True)
-        if not routeup_cmd.startswith('/'):
-            routeup_cmd = './' + routeup_cmd
+        if not routeup_cmd.startswith(b'/'):
+            routeup_cmd = b'./' + routeup_cmd
         # XXX i can't figure out how to reimplement openvpn's command lexer,
         # just toss the command into /bin/sh's maw
         subprocess.check_call(routeup_cmd, shell=True)
@@ -235,8 +275,27 @@ class InvalidArgs(ValueError):
     pass
 
 
+def serialize_disableargs(disable_ipv4, disable_ipv6):
+    if disable_ipv4:
+        return '4'
+    elif disable_ipv6:
+        return '6'
+    else:
+        return '0'
+
+
+def deserialize_disableargs(arg):
+    if arg == '4':
+        return True, False
+    elif arg == '6':
+        return False, True
+    else:
+        return False, False
+
+
 def parse_validate_args(cl_args):
-    parser = argparse.ArgumentParser(usage='%(prog)s [openvpn options]')
+    # XXX implement --help "manually" so as to always display the program version
+    parser = argparse.ArgumentParser(usage='%(prog)s [OPTIONS] OPENVPN_ARGS...', add_help=False)
     parser.add_argument(
         "--namespace",
         help="""Name of target network namespace (default: `%s`). For the root namespace,
@@ -247,24 +306,42 @@ def parse_validate_args(cl_args):
         "--dns", default="push", help="""
         Set DNS in the namespace. By default, attempt to set nameservers from
         from server-pushed DHCP options. Anything else will be interpreted
-        as a comma-delimited list of IPv4 nameserver addresses."""
+        as a comma-delimited list of IPv4 or IPv6 nameserver addresses."""
     )
-    parser.add_argument("--version", action='store_true', help="Print version and exit")
+    parser.add_argument(
+        "--disable-ipv6", action='store_true',
+        help="Disable IPv6 addresses and routes pushed by the server"
+    )
+    parser.add_argument(
+        "--disable-ipv4", action='store_true',
+        help="Disable IPv4 addresses and routes pushed by the server"
+    )
+    parser.add_argument(
+        '-h', '--help',
+        action='store_true',
+        help='show this help message and exit',
+    )
+    parser.add_argument("--version", action='version', version='%(prog)s ' + VERSION)
     # hidden argument so we can capture any preexisting route-up
     parser.add_argument('--route-up', help=argparse.SUPPRESS, dest='route_up')
     args, openvpn_args = parser.parse_known_args(cl_args)
-    if args.version:
-        print("namespaced-openvpn", VERSION)
-        raise InvalidArgs
 
     error = None
-    if re.search(r'\s', args.namespace):
+    if args.help:
+        error = None
+    elif re.search(r'\s', args.namespace):
         error = 'Invalid namespace'
     elif re.search(r'\s', args.dns):
         error = 'Invalid DNS string'
-    if error:
+    elif args.disable_ipv4 and args.disable_ipv6:
+        error = 'Cannot disable both IPv4 and IPv6'
+    elif len(openvpn_args) == 0:
+        error = 'Must supply arguments to pass to openvpn(8)'
+    if error or args.help:
+        print('namespaced-openvpn', VERSION, end='\n\n')
         parser.print_help()
-        print('namespaced-openvpn: error: %s' % (error,))
+        if error:
+            print('\nnamespaced-openvpn: error: %s' % (error,))
         raise InvalidArgs
 
     # see if they passed --config, so we can extract any route-up command.
@@ -313,9 +390,10 @@ def main():
     execv_args += ['--script-security', '2']
     # pass our own path as the route-up, with some extra data
     namespace = args.namespace if args.namespace != "" else '""'
+    disable_arg = serialize_disableargs(args.disable_ipv4, args.disable_ipv6)
     execv_args += [
         '--route-up',
-        '%s %s %s %s' % (__file__, namespace, args.dns, preexisting_routeup)
+        '%s %s %s %s %s' % (__file__, namespace, args.dns, preexisting_routeup, disable_arg)
     ]
 
     os.execv(OPENVPN_CMD, execv_args)
