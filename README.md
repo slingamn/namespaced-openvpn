@@ -102,6 +102,8 @@ The [Wireguard documentation](https://www.wireguard.com/netns/) describes a tech
     sudo namespaced-openvpn --namespace levelone --config ./config_one
     sudo ip netns exec levelone namespaced-openvpn --namespace leveltwo --config ./config_two
 
+The new namespace will come up with an empty set of iptables/nftables rules. If additional firewalling is desired inside the protected namespace (although I think this is likely unnecessary), it can be added in an openvpn `--up` script, which will run before the tunnel interface is transferred and given its routes. (openvpn will execute all scripts in the root namespace, so the script should first enter the namespace and then apply, or remove and reapply, the desired rules.)
+
 ## DNS hardening
 
 Name resolution is unfortunately a complex issue, presenting several hardening challenges. Here are two known issues:
