@@ -54,6 +54,8 @@ In a [Medium article](https://medium.com/@ValdikSS/another-critical-vpn-vulnerab
 
 On Linux, this attack already has an effective mitigation: the sysctl options `net.ipv4.conf.*.rp_filter`, when set to `1` (as is the default in many distributions), will drop incoming packets with "asymmetric routes" (such as the attacker's probes, which come in on `eth0` but whose replies would go out on `tun0`).
 
+[CVE-2019-14899](https://seclists.org/oss-sec/2019/q4/122) is a similar attack based on asymmetric routing (and hence is similarly mitigated by `rp_filter`). The attacker sends packets to the physical interface with source IPs in the private VPN space, then monitors the replies from the VPN interface, which disclose information about the state of its TCP/IP stack (including the IP address and TCP sequence numbers, which can then be used for data injection).
+
 ### IPv6 leaks
 
 "IPv6 leaks" are a fairly trivial problem: on a dual-stack system, changing the default route for IPv4 has no effect on the IPv6 stack, so applications will continue to route their IPv6 traffic over the physical interface. Despite the straightforward nature of the issue, its incidence in the wild is apparently high: [Perta et al., 2015](https://www.eecs.qmul.ac.uk/~hamed/papers/PETS2015VPN.pdf) discuss the scope of the problem.
@@ -74,7 +76,7 @@ As long as sensitive applications are correctly launched within the new, isolate
 
 1. Route injection is impossible because `NetworkManager`, `dhclient`, etc. are running in the root namespace, so they can respond to routing changes in the external network environment without affecting the protected namespace.
 2. "Port Fail" is blocked because the protected namespace has no routing exception for the remote gateway: every packet must go to `tun0`.
-3. Asymmetric routing attacks and IPv6 leaks are blocked because the protected namespace has no access to any physical interface.
+3. Asymmetric routing attacks (including CVE-2019-14899) and IPv6 leaks are blocked because the protected namespace has no access to any physical interface.
 4. The `openvpn` process can freely restart because it runs in the root namespace, which has unmodified routes --- so its DNS request for the remote, and then its handshake with the resulting remote IP, all use `eth0`.
 5. Accidental DNS leaks via LAN resolvers are typically blocked because the protected namespace has no direct layer-3 access to the LAN. However, additional hardening is needed to protect against some attacks and leaks --- see the "DNS hardening" section below.
 
