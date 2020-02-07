@@ -122,6 +122,14 @@ The first problem is that `ip netns exec` masks `/etc/resolv.conf` inside the na
 
 [systemd-resolved](https://www.freedesktop.org/software/systemd/man/systemd-resolved.service.html) presents a different problem; like the earlier [nscd](https://linux.die.net/man/8/nscd), it provides name resolution over UNIX domain sockets (via D-Bus), which can cross network namespace boundaries. That is to say, a name resolution inside the protected namespace may be delegated to a `systemd-resolved` instance running outside it, which will then issue a DNS request in cleartext. This is similar to a conventional DNS leak. Although most systems and applications are not yet using this functionality, we recommend against using `systemd-resolved` for this reason.
 
+* remove `resolve` from `/etc/netns/${NS_NAME}/nsswitch.conf` to disable `systemd-resolved` in the network namespace.
+  * See [this issue](https://github.com/slingamn/namespaced-openvpn/issues/7) and [nss-resolve docs](https://www.freedesktop.org/software/systemd/man/nss-resolve.html) for details.
+
+    ```diff
+    - hosts: files mymachines myhostname resolve [!UNAVAIL=return] dns
+    + hosts: files mymachines myhostname dn
+    ```
+
 ## seal-unseal-gateway
 Unfortunately, `namespaced-openvpn` sacrifices one of the traditional strengths of VPNs as privacy tools: it is relatively prone to user error, because the user must be careful to start any sensitive applications in the protected namespace. Processes running in the root namespace receive no protection. Therefore, it's worth presenting an alternative approach, one applicable to a traditional configuration that alters routes in the root namespace.
 
