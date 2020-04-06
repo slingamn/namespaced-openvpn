@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/python3
 
 """
 Wrap openvpn to run across two network namespaces:
@@ -9,9 +9,6 @@ Wrap openvpn to run across two network namespaces:
        is secure against deanonymization attacks like DHCP route injection,
        "port fail", and ValdikSS's asymmetric routing trick.
 """
-
-from __future__ import print_function
-from __future__ import unicode_literals
 
 import argparse
 import base64
@@ -24,7 +21,7 @@ import sys
 import tempfile
 from collections import defaultdict
 
-VERSION = '0.4.0'
+VERSION = '0.5.0'
 
 LOG = logging.getLogger()
 
@@ -359,10 +356,8 @@ def parse_validate_args(cl_args):
         with open(config_args.config) as config_file_obj:
             preexisting_routeup = routeup_from_config(config_file_obj)
     if preexisting_routeup:
-        preexisting_routeup = base64.b64encode(preexisting_routeup.encode('utf-8'))
-        # XXX make this the native string type, to match `namespace` and `dns`
-        if sys.version_info[0] == 3:
-            preexisting_routeup = preexisting_routeup.decode('ascii')
+        # make this the native string type, to match `namespace` and `dns`
+        preexisting_routeup = base64.b64encode(preexisting_routeup.encode('utf-8')).decode('ascii')
     else:
         preexisting_routeup = B64_EMPTY_SENTINEL
     return args, openvpn_args, preexisting_routeup
