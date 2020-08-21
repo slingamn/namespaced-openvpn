@@ -386,9 +386,10 @@ def main():
     # pass our own path as the route-up, with some extra data
     namespace = args.namespace if args.namespace != "" else '""'
     disable_arg = serialize_disableargs(args.disable_ipv4, args.disable_ipv6)
+    script_name = os.path.abspath(__file__)
     execv_args += [
         '--route-up',
-        '%s %s %s %s %s' % (__file__, namespace, args.dns, preexisting_routeup, disable_arg)
+        '%s %s %s %s %s' % (script_name, namespace, args.dns, preexisting_routeup, disable_arg)
     ]
 
     os.execv(OPENVPN_CMD, execv_args)
