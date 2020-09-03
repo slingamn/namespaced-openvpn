@@ -13,6 +13,7 @@ sudo ip netns exec protected sudo -u $USER -i
 ```
 
 The main implementation idea of `namespaced-openvpn` is this: instead of connecting a network namespace to the physical network using virtual Ethernet adapters and bridging, it suffices to transfer a tunnel interface into the namespace, while the process managing the tunnel (in this case `openvpn`) remains in the root namespace.
+Furthermore, if `dnsmasq` is installed it's configured as a caching-only DNS server in the network namespace.
 
 ## Summary
 
