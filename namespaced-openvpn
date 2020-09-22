@@ -30,6 +30,7 @@ DEFAULT_NAMESPACE = "protected"
 OPENVPN_CMD = '/usr/sbin/openvpn'
 IP_CMD = '/sbin/ip'
 IPTABLES_CMD = '/sbin/iptables'
+IP6TABLES_CMD = '/sbin/ip6tables'
 NSENTER_CMD = '/usr/bin/nsenter'
 MOUNT_CMD = '/bin/mount'
 UMOUNT_CMD = '/bin/umount'
@@ -154,18 +155,34 @@ def setup_dns(namespace, dns_type):
         with open(etc_resolvconf, 'w') as outfile:
             write_resolvconf(outfile, resolv_data)
 
+        # Insert/Prepend rules instead of appending because we can't delete the rules.
+        # Prepending allows the rules to still work if on second run, the DNS address changes.
+
+        # Block all other DNS (port 53 UDP) traffic
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IPTABLES_CMD, '-I', 'OUTPUT', '1', '-p', 'udp', '--dport', '53', '-j', 'DROP']
+        )
+
         # Allow the specified DNS addresses
         for dns in resolv_data['DNS']:
             subprocess.check_call(
                 _enter_namespace_cmd(namespace) +
-                [IPTABLES_CMD, '-A', 'OUTPUT', '-p', 'udp', '--dport', '53', '-j', 'ACCEPT', '-d', dns]
+                [IPTABLES_CMD, '-I', 'OUTPUT', '1', '-p', 'udp', '--dport', '53', '-j', 'ACCEPT', '-d', dns]
             )
 
         # Block all other DNS (port 53 UDP) traffic
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
-            [IPTABLES_CMD, '-A', 'OUTPUT', '-p', 'udp', '--dport', '53', '-j', 'DROP']
+            [IP6TABLES_CMD, '-I', 'OUTPUT', '1', '-p', 'udp', '--dport', '53', '-j', 'DROP']
         )
+
+        # Repeat for DNS6
+        for dns in resolv_data['DNS6']:
+            subprocess.check_call(
+                _enter_namespace_cmd(namespace) +
+                [IP6TABLES_CMD, '-I', 'OUTPUT', '1', '-p', 'udp', '--dport', '53', '-j', 'ACCEPT', '-d', dns]
+            )
 
     finally:
         if mountdir is not None:
