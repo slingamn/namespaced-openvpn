@@ -29,6 +29,7 @@ DEFAULT_NAMESPACE = "protected"
 
 OPENVPN_CMD = '/usr/sbin/openvpn'
 IP_CMD = '/sbin/ip'
+IPTABLES_CMD = '/sbin/iptables'
 NSENTER_CMD = '/usr/bin/nsenter'
 MOUNT_CMD = '/bin/mount'
 UMOUNT_CMD = '/bin/umount'
@@ -152,6 +153,20 @@ def setup_dns(namespace, dns_type):
     try:
         with open(etc_resolvconf, 'w') as outfile:
             write_resolvconf(outfile, resolv_data)
+
+        # Allow the specified DNS addresses
+        for dns in resolv_data['DNS']:
+            subprocess.check_call(
+                _enter_namespace_cmd(namespace) +
+                [IPTABLES_CMD, '-A', 'OUTPUT', '-p', 'udp', '--dport', '53', '-j', 'ACCEPT', '-d', dns]
+            )
+
+        # Block all other DNS (port 53 UDP) traffic
+        subprocess.check_call(
+            _enter_namespace_cmd(namespace) +
+            [IPTABLES_CMD, '-A', 'OUTPUT', '-p', 'udp', '--dport', '53', '-j', 'DROP']
+        )
+
     finally:
         if mountdir is not None:
             subprocess.check_call([UMOUNT_CMD, mountdir])
