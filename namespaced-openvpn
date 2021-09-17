@@ -2,7 +2,6 @@
 
 """
 Wrap openvpn to run across two network namespaces:
-
     1. The root namespace has its original routes, enabling SIGUSR1 restart.
     2. The adapter tun0 is moved to a separate namespace (default name
        `protected`), where all traffic is routed over tun0. This namespace
@@ -45,14 +44,14 @@ def _enter_namespace_cmd(namespace):
     elif namespace == '':
         # the root namespace is not named so it cannot be entered with ip-netns
         # we need to reset the mount namespace as well for unclear reasons
-        return [NSENTER_CMD, '-m', '-n', '-t', '1', '--']
+        return ['sudo', NSENTER_CMD, '-m', '-n', '-t', '1', '--']
     else:
-        return [IP_CMD, 'netns', 'exec', namespace]
+        return ['sudo', IP_CMD, 'netns', 'exec', namespace]
 
 
 def _adapter_names(namespace):
     """Parse `ip link show` output and get the interface names."""
-    cmd = _enter_namespace_cmd(namespace) + [IP_CMD, 'link', 'show']
+    cmd = _enter_namespace_cmd(namespace) + ['sudo', IP_CMD, 'link', 'show']
     output = subprocess.check_output(cmd)
     # example line of output:
     # 2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 1500 qdisc fq_codel state UP [...]
@@ -68,8 +67,8 @@ def setup_namespace(namespace):
             LOG.error('Namespace %s already has adapters %s, exiting.' % (namespace, adapters))
             raise Exception
     else:
-        subprocess.check_call(_enter_namespace_cmd('') + [IP_CMD, 'netns', 'add', namespace])
-    subprocess.check_call(_enter_namespace_cmd(namespace) + [IP_CMD, 'link', 'set', 'lo', 'up'])
+        subprocess.check_call(_enter_namespace_cmd('') + ['sudo', IP_CMD, 'netns', 'add', namespace])
+    subprocess.check_call(_enter_namespace_cmd(namespace) + ['sudo', IP_CMD, 'link', 'set', 'lo', 'up'])
 
 
 def parse_dhcp_opts(env):
@@ -146,7 +145,7 @@ def setup_dns(namespace, dns_type):
         # to bypass this, create a new, nonrecursive bind mount of /, then access
         # etc/resolv.conf under that path.
         mountdir = tempfile.mkdtemp()
-        subprocess.check_call([MOUNT_CMD, '--bind', '/', mountdir])
+        subprocess.check_call(['sudo', MOUNT_CMD, '--bind', '/', mountdir])
         etc_resolvconf = os.path.join(mountdir, 'etc/resolv.conf')
 
     try:
@@ -154,7 +153,7 @@ def setup_dns(namespace, dns_type):
             write_resolvconf(outfile, resolv_data)
     finally:
         if mountdir is not None:
-            subprocess.check_call([UMOUNT_CMD, mountdir])
+            subprocess.check_call(['sudo', UMOUNT_CMD, mountdir])
             os.rmdir(mountdir)
 
 
@@ -201,7 +200,7 @@ def route_up(args):
     subprocess.check_call([IP_CMD, 'link', 'set', dev, 'netns', target])
     subprocess.check_call(
         _enter_namespace_cmd(namespace) +
-        [IP_CMD, 'link', 'set', dev, 'up']
+        ['sudo', IP_CMD, 'link', 'set', dev, 'up']
     )
 
     if ipv4_enabled:
@@ -209,12 +208,12 @@ def route_up(args):
         # give it its ipv4 address
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
-            [IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev]
+            ['sudo', IP_CMD, 'addr', 'add', ifconfig_local, 'peer', peer_addr, 'dev', dev]
         )
         # route all traffic over the tunnel
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
-            [IP_CMD, 'route', 'add', 'default', 'dev', dev]
+            ['sudo', IP_CMD, 'route', 'add', 'default', 'dev', dev]
         )
 
     if ipv6_enabled:
@@ -222,11 +221,11 @@ def route_up(args):
         peer_addr = '%s/%s' % (ifconfig_ipv6_remote, ifconfig_ipv6_netbits)
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
-            [IP_CMD, '-6', 'addr', 'add', ifconfig_ipv6_local, 'peer', peer_addr, 'dev', dev]
+            ['sudo', IP_CMD, '-6', 'addr', 'add', ifconfig_ipv6_local, 'peer', peer_addr, 'dev', dev]
         )
         subprocess.check_call(
             _enter_namespace_cmd(namespace) +
-            [IP_CMD, '-6', 'route', 'add', 'default', 'dev', dev]
+            ['sudo', IP_CMD, '-6', 'route', 'add', 'default', 'dev', dev]
         )
 
     setup_dns(namespace, dns_type)
